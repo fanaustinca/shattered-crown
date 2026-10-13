@@ -15,7 +15,7 @@ export function installDebugApi(game: Game) {
       game.camera.lookAt(tx, gy(ty, tx, tz), tz);
       game.camera.updateMatrixWorld();
     },
-    setTime(h: number) { game.hours = h; game.lighting.adapt = 1; game.renderFrame(); game.lighting.adapt = 0.03; },
+    setTime(h: number) { game.hours = h; game.lighting.adapt = 1; game.lighting.forceShadows = true; game.renderFrame(); game.lighting.adapt = 0.03; },
     setOvercast(v: number) { game.overcast = v; },
     /** Advance the simulation by n fixed steps and render once. */
     advance(seconds: number, dt = 1 / 30) {
@@ -72,7 +72,7 @@ export function installDebugApi(game: Game) {
         else anim.update(dt, st);
       }
       rig.root.updateMatrixWorld(true);
-      const box = new THREE.Box3().setFromObject(rig.mesh, true);
+      const box = new THREE.Box3().setFromObject(rig.mesh);
       const c = box.getCenter(new THREE.Vector3()), size = box.getSize(new THREE.Vector3()).length();
       const d = size * camDist;
       game.freeCam = true;
@@ -100,7 +100,7 @@ export function installDebugApi(game: Game) {
         stuckInfo: stuck.slice(0, 8).map((n) => ({ block: (() => { const a = n.st.pos.clone().setY(n.st.pos.y + 0.9); const b = (n.path[0] ?? a).clone().setY(a.y); const d = b.clone().sub(a); const len = d.length(); if (len < 0.01) return 'none'; const h = game.physics.ray(a, d.normalize(), len, undefined, n.collider); return h ? (h.owner?.kind ?? '?') + '@' + h.toi.toFixed(2) + '' : 'clear'; })(), plen: n.path.length, who: n.name + ' ' + n.activity, at: n.st.pos.toArray().map((v) => +v.toFixed(1)), next: n.path[0]?.toArray().map((v) => +v.toFixed(1)), inB: game.settlements.inside(n.st.pos)?.placed.spec.type ?? null })) };
     },
     /** Synchronously stream in all buildings near (x,z). */
-    stream(x: number, z: number) { const v = new THREE.Vector3(x, 0, z); game.settlements.update(v, 0); while (game.settlements.queue.length) game.settlements.update(v, 50); return game.settlements.live.size; },
+    stream(x: number, z: number) { const v = new THREE.Vector3(x, 0, z); for (let k = 0; k < 3; k++) game.settlements.update(v, 0); return game.settlements.live.size; },
     site(id: string) { return game.towns.plans.find((p) => p.site.id === id); },
     /** View from inside a building of a town: camera in the ground-floor room looking at the back wall. */
     interior(siteId: string, idx = 0, floor = 0) {

@@ -8,7 +8,7 @@ import type { Game } from '../game';
 import type { Person, Placed } from '../world/towns';
 import type { Rig } from '../creature/rig';
 import { BipedAnimator, type MoveState } from '../creature/anim';
-import { SKIN_TONES, HAIR_COLORS } from '../creature/rig';
+import { SKIN_TONES, HAIR_COLORS, AnimLod, releaseRig } from '../creature/rig';
 import type { LiveBuilding } from '../build/settlements';
 import { navPath } from '../build/building';
 import type { FurnitureNode } from '../props/furnish';
@@ -90,6 +90,7 @@ export class NPC {
     this.game.scene.remove(this.rig.root);
     this.game.physics.removeBody(this.body);
     this.game.physics.world.removeCharacterController(this.kcc);
+    releaseRig(this.rig);
   }
   say(text: string, sound = false) {
     if (this.bubbleT > 0 && this.bubble === text) return;
@@ -199,7 +200,7 @@ export class NPC {
       if (st.pos.distanceTo(p.pos) < 4 && this.activity !== 'sleep') st.look = p.eyePos();
     }
     // open doors in the way
-    if (goal && this.doorCooldown <= 0) g.residents.openDoorsNear(st.pos, goal);
+    if (goal && this.doorCooldown <= 0) { g.residents.openDoorsNear(st.pos, goal); this.doorCooldown = 0.25; }
     // steering
     if (goal) {
       const want = Math.atan2(goal.x - st.pos.x, goal.z - st.pos.z);
@@ -212,6 +213,18 @@ export class NPC {
     const t = this.collider.translation();
     this.vy -= 9.81 * dt;
     const desired = { x: Math.sin(st.yaw) * st.speed * dt, y: this.vy * dt, z: Math.cos(st.yaw) * st.speed * dt };
+    // movement LOD: residents far from the player resolve collisions every third step (with the motion
+    // accumulated in between and shown as a prediction); nothing about their route or pace changes
+    const far = !this.hostile && !this.fightTarget && st.pos.distanceToSquared(p.pos) > 32 * 32;
+    this.pend.x += desired.x; this.pend.y += desired.y; this.pend.z += desired.z; this.pendT += dt;
+    if (far && ++this.kccK % 3 !== 0) {
+      st.pos.x += desired.x; st.pos.z += desired.z;
+      st.vel.set(desired.x / dt, 0, desired.z / dt);
+      return;
+    }
+    desired.x = this.pend.x; desired.y = this.pend.y; desired.z = this.pend.z;
+    dt = this.pendT;
+    this.pend.set(0, 0, 0); this.pendT = 0;
     this.kcc.computeColliderMovement(this.collider, desired, RAPIER.QueryFilterFlags.EXCLUDE_SENSORS, groups(G_CHAR, ALL & ~G_SENSOR & ~G_HELD), (c) => { const o = g.physics.owners.get(c.handle); return !o || (o.kind !== 'npc' && o.kind !== 'soldier' && o.kind !== 'prop'); });
     const mv = this.kcc.computedMovement();
     if (this.kcc.computedGrounded()) this.vy = 0;
@@ -253,6 +266,10 @@ export class NPC {
     if (this.sleepPose) { this.rig.root.position.copy(this.sleepPose.pos); this.rig.root.rotation.set(-Math.PI / 2, this.sleepPose.yaw, 0, 'YXZ'); this.rig.root.updateMatrixWorld(true); }
   }
   sleepPose: { pos: THREE.Vector3; yaw: number } | null = null;
+  lod = new AnimLod();
+  private pend = new THREE.Vector3();
+  private pendT = 0;
+  private kccK = Math.floor(Math.random() * 3);
   fightTarget: NPC | null = null;
   stuckN = 0;
   stuckT = 0;
@@ -491,8 +508,8 @@ export class Residents {
     for (const n of this.live) {
       const d = n.st.pos.distanceTo(cam);
       n.rig.root.visible = d < 160;
-      if (d > 70 && Math.random() > 0.4) continue;
-      n.animate(d > 70 ? dt * 2.5 : dt);
+      const a = n.lod.step(n.rig, d, dt);
+      if (a > 0) n.animate(a);
     }
   }
 }

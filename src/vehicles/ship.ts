@@ -58,7 +58,7 @@ export class Ship implements Interactable {
   name_: string;
   river = false;
   row = 0;
-  constructor(public game: Game, pos: THREE.Vector3, yaw: number, kind: 'ship' | 'boat', name: string) {
+  constructor(public game: Game, pos: THREE.Vector3, yaw: number, public kind: 'ship' | 'boat', name: string) {
     this.name_ = name;
     const ph = game.physics;
     if (kind === 'ship') {

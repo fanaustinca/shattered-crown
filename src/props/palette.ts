@@ -121,7 +121,13 @@ function weathering(m: THREE.MeshStandardMaterial, amount: number) {
     prev.call(m, sh, r);
     sh.uniforms.uWx = { value: amount };
     sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vWxPos; varying vec3 vWxN;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWxPos = (modelMatrix * vec4(transformed, 1.0)).xyz; vWxN = normalize(mat3(modelMatrix) * objectNormal);');
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+#ifdef USE_BATCHING
+  mat4 wxM = modelMatrix * batchingMatrix;
+#else
+  mat4 wxM = modelMatrix;
+#endif
+  vWxPos = (wxM * vec4(transformed, 1.0)).xyz; vWxN = normalize(mat3(wxM) * objectNormal);`);
     sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vWxPos; varying vec3 vWxN; uniform float uWx;' + WX_FRAG)
       .replace('#include <map_fragment>', `#include <map_fragment>
         {

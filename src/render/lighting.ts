@@ -5,6 +5,7 @@ import { skyUniforms, sunTransmittance } from './sky';
 import { sharedUniforms } from './pipeline';
 import type { Quality } from '../core/settings';
 
+const _fwd = new THREE.Vector3();
 const LIT = new Set(['MeshStandardMaterial', 'MeshPhysicalMaterial', 'MeshLambertMaterial', 'MeshPhongMaterial', 'MeshToonMaterial']);
 
 export class Lighting {
@@ -32,7 +33,7 @@ export class Lighting {
       shadowBias: -0.00012,
     });
     this.csm.fade = true;
-    for (const l of this.csm.lights) { l.shadow.normalBias = 0.04; l.shadow.radius = 1.5; }
+    for (const l of this.csm.lights) { l.shadow.normalBias = 0.04; l.shadow.radius = 1.5; l.shadow.camera.layers.enable(2); }
   }
 
   /** Wire a lit material into CSM, chaining any existing onBeforeCompile. */
@@ -87,8 +88,32 @@ export class Lighting {
     this.exposure += (target - this.exposure) * this.adapt;
   }
 
+  /** Staggered cascade refresh: the near cascade renders every frame, far ones every 2nd/3rd/4th frame
+   *  (phase-offset), or immediately when the camera or sun moved enough to matter for that cascade. The stale
+   *  map and its matrix stay consistent, so shadows never swim; they just refresh less often far away. */
+  private frame = 0;
+  private last: { pos: THREE.Vector3; fwd: THREE.Vector3; sun: THREE.Vector3; f: number }[] = [];
+  forceShadows = true;
   update(camera: THREE.Camera) {
     this.csm.update();
-    void camera;
+    this.frame++;
+    const fwd = _fwd.set(0, 0, -1).applyQuaternion(camera.quaternion);
+    this.csm.lights.forEach((l, i) => {
+      const sh = l.shadow;
+      sh.autoUpdate = false;
+      const st = (this.last[i] ??= { pos: new THREE.Vector3(1e9, 0, 0), fwd: new THREE.Vector3(), sun: new THREE.Vector3(), f: -99 });
+      const cam = sh.camera as THREE.OrthographicCamera;
+      const extent = Math.max(1, cam.right - cam.left);
+      const every = i === 0 ? 1 : i + 1;
+      const due = (this.frame + i) % every === 0;
+      const moved = st.pos.distanceTo(camera.position) > extent * 0.015;
+      const turned = st.fwd.dot(fwd) < (i === 0 ? 0.9994 : 0.9976);
+      const sunMoved = st.sun.dot(this.csm.lightDirection) < 0.999998;
+      if (this.forceShadows || due || moved || turned || sunMoved) {
+        sh.needsUpdate = true;
+        st.pos.copy(camera.position); st.fwd.copy(fwd); st.sun.copy(this.csm.lightDirection); st.f = this.frame;
+      }
+    });
+    this.forceShadows = false;
   }
 }

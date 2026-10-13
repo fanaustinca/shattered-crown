@@ -208,7 +208,7 @@ export class War {
           g.sound?.(water ? 'splash' : 'impact:wood', pos, 1.5);
           for (const s of this.soldiers) if (s.alive && s.st.pos.distanceTo(pos) < 4) s.hurt('torso', 70 * (1 - s.st.pos.distanceTo(pos) / 4), b.byPlayer ? 'player' : s);
           if (g.player.pos.distanceTo(pos) < 4) g.player.hurt('torso', 60 * (1 - g.player.pos.distanceTo(pos) / 4), 'cannon', 0.5);
-          for (const pr of g.props.props) if (pr.body && pr.obj.position.distanceTo(pos) < 5) pr.body.applyImpulse(pr.obj.position.clone().sub(pos).normalize().multiplyScalar(30), true);
+          for (const pr of g.props.props) if (pr.obj.position.distanceTo(pos) < 5 && !pr.stowedIn) { g.props.wake(pr); pr.body?.applyImpulse(pr.obj.position.clone().sub(pos).normalize().multiplyScalar(30), true); }
         }
         g.physics.world.removeRigidBody(b.body); b.mesh.removeFromParent(); this.balls.splice(i, 1);
       }
@@ -271,5 +271,8 @@ export class War {
     if (this.soldiers.length && !alive('vanguardia') && alive('ironreach')) { this.battles.ironreach++; this.waveT = Math.min(this.waveT, 40); }
   }
   step(dt: number) { for (const s of this.soldiers) s.step(dt); }
-  animate(dt: number) { for (const s of this.soldiers) s.animate(dt); }
+  animate(dt: number) {
+    const cam = this.game.camera.position;
+    for (const s of this.soldiers) { const a = s.lod.step(s.rig, s.st.pos.distanceTo(cam), dt); if (a > 0) s.animate(a); }
+  }
 }

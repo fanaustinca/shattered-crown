@@ -36,6 +36,7 @@ import { Ship } from './vehicles/ship';
 import { mulberry32 } from './core/noise';
 import type { Placed } from './world/towns';
 import { VERSION } from './version';
+import { frameStamp } from './creature/rig';
 
 export type Progress = (f: number, msg: string) => void;
 
@@ -202,6 +203,7 @@ export class Game {
     this.settlements = new Settlements(this.world, this.physics, this.scene, this.props, this.towns);
     this.settlements.buildStatic();
     this.lightPool = new LightPool(this.scene, this.q.name === 'low' ? 4 : 8);
+    this.props.insideAt = (p) => !!this.settlements.inside(p);
     this.props.coldAt = (p) => { const l = this.settlements.inside(p); return !!l && p.y < l.root.position.y + 0.3; };
     this.player = new Player(this.physics, this.world, this.input);
     const start = siteById('aurelhold');
@@ -318,9 +320,14 @@ export class Game {
     loop();
   }
 
+  /** per-subsystem CPU time (ms, smoothed) for the perf overlay and QA */
+  prof: Record<string, number> = {};
+  private markT = 0;
+  mark(name: string) { const t = performance.now(); this.prof[name] = (this.prof[name] ?? 0) * 0.9 + (t - this.markT) * 0.1; this.markT = t; }
   step(dt: number) {
     if (this.paused) { this.input.beginFrame(); this.input.endFrame(); return; }
     this.input.beginFrame();
+    this.markT = performance.now();
     // sleeping: time flies until morning (or until someone finds you in their bed)
     let simDt = dt;
     if (this.sleepUntil >= 0) {
@@ -342,27 +349,37 @@ export class Game {
     }
     this.time += simDt;
     if (!this.freeCam) this.player.look(dt);
+    this.props.activators[0] = this.player.pos;
+    this.props.updateActivity(dt);
     this.physics.update(simDt);
+    this.mark('physics');
     this.weather.update(dt);
     this.fauna.updateBubble(settings.simRadius);
     this.residents.update(settings.simRadius);
+    this.mark('bubble');
     this.law.update(dt);
     this.economy.update();
     this.war.update(dt);
+    this.mark('war');
     this.settlements.people = [this.player.pos, ...this.residents.live.map((n) => n.st.pos)];
     this.settlements.update(this.freeCam ? this.camera.position : this.player.pos, 2);
     this.settlements.update2(dt, dt * this.daySpeed * (this.sleepUntil >= 0 ? 900 : 1), this.time, this.camera.position);
+    this.mark('settlements');
     this.fauna.animate(dt);
     this.residents.animate(dt);
     this.war.animate(dt);
+    this.mark('animate');
     for (const c of this.carts) c.sync();
     for (const s of this.ships) s.sync(dt);
+    this.mark('vehicles');
     this.interaction.update(dt);
     this.combat.update(dt);
+    this.mark('interact');
     if (!this.freeCam) this.player.updateCamera(this.camera, dt);
     this.playerBody.update(dt);
     this.particles.update(dt, this.camera.position);
     this.ambience(dt);
+    this.mark('fx');
     if (this.input.hit('KeyB') && false) void 0;
     this.input.endFrame();
   }
@@ -468,6 +485,8 @@ export class Game {
 
   renderFrame() {
     const t0 = performance.now();
+    this.markT = t0;
+    frameStamp.n++;
     sharedUniforms.uTime.value = this.time;
     skyUniforms.uTime.value = this.time;
     this.lighting.setTime(this.hours, this.overcast);
@@ -479,8 +498,9 @@ export class Game {
     this.terrain.update(this.camera.position);
     this.grass.update(this.camera.position);
     this.grass.setInteractors(this.interactors());
-    this.trees.update(this.camera.position);
+    this.trees.update(this.camera.position, false, this.camera);
     this.water.update(this.camera);
+    this.mark('r:world');
     sunDirRef.copy(this.lighting.sunDir);
     this.lighting.update(this.camera);
     this.settlements.update2(0, 0, this.time, this.camera.position);
@@ -495,8 +515,9 @@ export class Game {
     }
     this.lighting.interior = !!this.settlements.inside(this.camera.position);
     if (this.frameNo++ % 30 === 0) this.props.updateLooks();
-    if (this.frameNo % 10 === 0 || this.freeCam) this.props.cull(this.camera.position);
+    if (this.frameNo % 10 === 0 || this.freeCam) { this.props.cull(this.camera.position); this.shadowLod(); }
     const au = this.pipeline.atmoUniforms;
+    this.mark('r:prep');
     au.uUnderwater.value = this.player && this.player.underwater && !this.freeCam ? 1 : 0;
     au.uWaterY.value = this.player?.waterY ?? 0;
     const fu = this.pipeline.finalUniforms;
@@ -504,8 +525,22 @@ export class Game {
     fu.uHurt.value = this.player ? THREE.MathUtils.clamp(1 - this.player.totalHealth / 70, 0, 1) : 0;
     fu.uWetLens.value = this.weather && !this.lighting.interior ? this.weather.cur.rain : 0;
     this.pipeline.render();
+    this.mark('r:submit');
     this.hud?.update();
     this.frameMs = performance.now() - t0;
+  }
+
+  /** Screen-size shadow culling for vehicles: a cart's shadow is a few pixels beyond ~180 m, a ship's beyond ~500 m. */
+  private shadowLod() {
+    const cam = this.camera.position;
+    const set = (root: THREE.Object3D, r: number) => {
+      const cast = root.position.distanceTo(cam) < r * 60;
+      if (root.userData.cast === cast) return;
+      root.userData.cast = cast;
+      root.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh && !m.userData.noShadow) m.castShadow = cast; });
+    };
+    for (const c of this.carts) set(c.root, 3);
+    for (const s of this.ships) set(s.root, s.kind === 'ship' ? 9 : 3);
   }
 
   /** Feet, hooves and wheels that push the grass aside. */

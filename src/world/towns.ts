@@ -27,6 +27,9 @@ export interface TownPlan {
   orchards: { x: number; z: number; w: number; d: number; yaw: number }[];
   haystacks: [number, number][];
   lamps: [number, number][];
+  /** radius around the site centre that contains every building (streaming) */
+  siteR: number;
+  anyLive?: boolean;
 }
 
 const FIRST_M = ['Aldric', 'Bran', 'Cedric', 'Dunstan', 'Edmund', 'Falk', 'Godric', 'Harold', 'Ivo', 'Jory', 'Kenric', 'Leofric', 'Merek', 'Nyle', 'Osric', 'Piers', 'Quill', 'Roderick', 'Simon', 'Tobias', 'Ulric', 'Wat', 'Wystan', 'Hugh', 'Gerald', 'Ansel', 'Brom', 'Corin', 'Daveth', 'Emeric'];
@@ -47,7 +50,7 @@ export class Towns {
   private planSite(site: Site): TownPlan {
     const w = this.world;
     const r = mulberry32(site.x * 13 + site.z * 7 + 99);
-    const plan: TownPlan = { site, buildings: [], walls: null, plaza: { x: site.x, z: site.z, r: site.kind === 'capital' ? 22 : 13 }, wells: [], stalls: [], keep: null, docks: [], streets: [], gardens: [], paddocks: [], orchards: [], haystacks: [], lamps: [] };
+    const plan: TownPlan = { site, buildings: [], walls: null, plaza: { x: site.x, z: site.z, r: site.kind === 'capital' ? 22 : 13 }, wells: [], stalls: [], keep: null, docks: [], streets: [], gardens: [], paddocks: [], orchards: [], haystacks: [], lamps: [], siteR: site.r };
     const iron = site.kingdom === 'ironreach';
     const isles = site.kingdom === 'isles';
     const baseY = w.heightAt(site.x, site.z);
@@ -218,6 +221,7 @@ export class Towns {
     }
     this.enrich(plan, r, add, overlaps, okGround, placed);
     this.populate(plan, r);
+    for (const b of plan.buildings) plan.siteR = Math.max(plan.siteR, Math.hypot(b.x - site.x, b.z - site.z) + 12);
     return plan;
   }
 

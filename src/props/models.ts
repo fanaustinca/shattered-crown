@@ -22,6 +22,10 @@ export function loadModel(name: string): Promise<THREE.Group> {
           m.castShadow = true; m.receiveShadow = true;
           const mat = m.material as THREE.MeshStandardMaterial;
           if (mat.map) mat.map.anisotropy = 8;
+          // physical transmission forces three to re-render the whole scene into a transmission buffer every frame;
+          // thin lantern/bottle glass looks the same as a clear, glossy blend
+          const pm = mat as THREE.MeshPhysicalMaterial;
+          if (pm.transmission > 0) { pm.transmission = 0; pm.transparent = true; pm.opacity = 0.28; pm.depthWrite = false; pm.roughness = Math.min(pm.roughness, 0.08); m.castShadow = false; }
         }
       });
       prep?.(root);

@@ -31,6 +31,8 @@ export class Prop {
   rotten = 0;
   container?: { w: number; h: number; open: boolean };
   restT = 0;
+  /** cached: resting inside a building */
+  indoors: boolean | undefined;
   constructor(public def: ItemDef, public mgr: PropManager) {
     const glb = def.glb ? instanceModel(def.glb) : null;
     let mesh: THREE.Object3D | null = glb;
@@ -41,6 +43,9 @@ export class Prop {
     }
     this.obj = new THREE.Group();
     this.obj.add(mesh);
+    // the parts never move relative to the prop: only the prop's own transform is recomputed each frame
+    mesh.traverse((o) => { o.updateMatrix(); o.matrixAutoUpdate = false; (o as THREE.Mesh).castShadow = false; });
+    this.obj.userData.cast = false;
     this.obj.userData.prop = this;
     this.container = def.container;
   }
@@ -76,9 +81,11 @@ export class PropManager {
     p.obj.position.copy(pos);
     if (quat) p.obj.quaternion.copy(quat);
     this.group.add(p.obj);
-    this.makeBody(p, opts.sleep ?? false);
-    if (opts.vel && p.body) p.body.setLinvel(opts.vel, true);
     this.props.add(p);
+    // resting belongings stay dormant (no rigid body) until someone comes near; everything else is live
+    if (opts.sleep && !this.nearActivator(p)) this.makeDormant(p);
+    else this.makeBody(p, false);
+    if (opts.vel && p.body) p.body.setLinvel(opts.vel, true);
     return p;
   }
 
@@ -103,6 +110,40 @@ export class PropManager {
     return desc;
   }
 
+  /** Props within this horizontal distance of an activator get real rigid bodies. */
+  activeR = 11;
+  activators: THREE.Vector3[] = [];
+  dormant = new Set<Prop>();
+  private nearActivator(p: Prop, r = this.activeR) {
+    const q = p.obj.position;
+    for (const a of this.activators) { const dx = a.x - q.x, dz = a.z - q.z; if (dx * dx + dz * dz < r * r && Math.abs(a.y - q.y) < 30) return true; }
+    return false;
+  }
+  makeDormant(p: Prop) {
+    this.removeBody(p);
+    this.dormant.add(p);
+    p.obj.matrixAutoUpdate = false;
+    p.obj.updateMatrix();
+    p.obj.updateMatrixWorld(true);
+  }
+  wake(p: Prop) {
+    if (!this.dormant.delete(p)) return;
+    p.obj.matrixAutoUpdate = true;
+    if (!p.body && !p.stowedIn && !p.held) this.makeBody(p, false);
+  }
+  /** Bring props near the player to life; put far, resting ones back to sleep without bodies. */
+  private actT = 0;
+  updateActivity(dt: number) {
+    this.actT -= dt;
+    if (this.actT > 0) return;
+    this.actT = 0.2;
+    for (const p of this.dormant) if (this.nearActivator(p)) this.wake(p);
+    for (const p of this.props) {
+      if (!p.body || p.held || p.stowedIn || this.dormant.has(p)) continue;
+      if (p.body.isSleeping() && !this.nearActivator(p, this.activeR + 6)) this.makeDormant(p);
+    }
+  }
+
   makeBody(p: Prop, sleep: boolean) {
     const t = p.obj.position, q = p.obj.quaternion;
     const bd = RAPIER.RigidBodyDesc.dynamic().setTranslation(t.x, t.y, t.z).setRotation(q).setLinearDamping(0.05).setAngularDamping(0.25).setCcdEnabled(p.def.mass < 1);
@@ -116,6 +157,7 @@ export class PropManager {
   }
   destroy(p: Prop) {
     this.removeBody(p);
+    this.dormant.delete(p);
     p.obj.parent?.remove(p.obj);
     this.props.delete(p);
     for (const c of [...p.contents]) this.destroy(c);
@@ -198,13 +240,16 @@ export class PropManager {
   volumes: { obj: THREE.Object3D; box: THREE.Box3; carrier: { contents: Prop[] }; moving: () => boolean }[] = [];
 
   /** Per physics step: sync transforms, detect resting-in-container, age food. */
+  private ageAcc = 0; private ageT = 0;
   step(dt: number, hours: number) {
     const tmpP = new THREE.Vector3(), tmpQ = new THREE.Quaternion();
+    // food ages in batches (cold cellars slow it): no need to test every prop every physics step
+    this.ageAcc += hours; this.ageT += dt;
+    if (this.ageT > 0.5) {
+      for (const p of this.props) if (p.def.food) p.age += this.ageAcc * (this.coldAt(p.obj.getWorldPosition(tmpP)) ? 0.25 : 1);
+      this.ageAcc = 0; this.ageT = 0;
+    }
     for (const p of this.props) {
-      if (p.def.food) {
-        const cold = this.coldAt(p.obj.getWorldPosition(tmpP));
-        p.age += hours * (cold ? 0.25 : 1);
-      }
       if (!p.body) continue;
       const lv = p.body.linvel();
       p.prevVel.set(lv.x, lv.y, lv.z);
@@ -264,14 +309,16 @@ export class PropManager {
     v.obj.add(p.obj);
     m.decompose(p.obj.position, p.obj.quaternion, p.obj.scale);
   }
-  /** Distance culling: small props vanish beyond ~45 m and only cast shadows up close. */
+  /** Distance culling: small props vanish beyond ~26 m; shadows only up close (indoors the walls already shade them). */
+  insideAt: (p: THREE.Vector3) => boolean = () => false;
   cull(cam: THREE.Vector3) {
     for (const p of this.props) {
       if (p.stowedIn) continue;
       const d2 = p.obj.position.distanceToSquared(cam);
       const big = p.def.mass > 5;
       p.obj.visible = d2 < (big ? 70 * 70 : 26 * 26);
-      const cast = d2 < (big ? 40 * 40 : 14 * 14);
+      if (p.indoors === undefined || p.body) p.indoors = this.insideAt(p.obj.position);
+      const cast = d2 < (p.indoors ? 8 * 8 : big ? 32 * 32 : 14 * 14);
       if (p.obj.userData.cast !== cast) { p.obj.userData.cast = cast; p.obj.traverse((o) => { (o as THREE.Mesh).castShadow = cast; }); }
     }
   }

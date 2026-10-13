@@ -8,6 +8,7 @@ import { Towns, type Placed, type TownPlan } from '../world/towns';
 import { generateBuilding, type BuildingModel } from './building';
 import { buildWalls, buildBridge, buildDock, fenceRect, well, stall, haystack, lampPost, type StructModel } from './structures';
 import { GeoBuilder } from './geom';
+import { BatchPool, type BatchHandle } from '../render/batch';
 import { material, meshesFrom } from '../props/palette';
 import { furnish } from '../props/interior';
 import { FurnitureNode, type MovableNode } from '../props/furnish';
@@ -16,6 +17,7 @@ import { ITEMS } from '../props/items';
 import { mulberry32 } from '../core/noise';
 
 const _tmpV = new THREE.Vector3();
+const _up = new THREE.Vector3(0, 1, 0);
 export class Door {
   node = new THREE.Group();
   body: RAPIER.RigidBody;
@@ -49,6 +51,7 @@ export class Door {
   toggle() { if (this.locked) return false; this.target = this.target > 0.5 ? 0 : 1; this.autoClose = 0; return true; }
   /** seconds until an NPC-opened door swings shut (only once the doorway is clear) */
   autoClose = 0;
+  cast = true;
   update(dt: number, people?: THREE.Vector3[]) {
     if (this.autoClose > 0) {
       const dp = this.node.getWorldPosition(_tmpV);
@@ -70,6 +73,12 @@ export interface LiveBuilding {
   placed: Placed; model: BuildingModel; root: THREE.Group; body: RAPIER.RigidBody;
   doors: Door[]; furniture: FurnitureNode[]; props: Prop[]; fires: THREE.Vector3[];
   bedOwners: { node: FurnitureNode; sleep: THREE.Vector3; person: string | null }[];
+  /** exterior shell in the shared material batches */
+  shell: BatchHandle;
+  /** furnished interior (furniture, props, beds, inner doors) is streamed only near the player */
+  furnished: boolean;
+  intColliders: RAPIER.Collider[];
+  detailed: boolean;
 }
 
 export class Settlements {
@@ -79,24 +88,34 @@ export class Settlements {
   live = new Map<string, LiveBuilding>();
   models = new Map<string, BuildingModel>();
   queue: Placed[] = [];
+  private queued = new Set<Placed>();
   townLod = new Map<string, { meshes: THREE.Mesh[]; flags: THREE.DataTexture; index: Map<string, number> }>();
   torches: THREE.Vector3[] = [];
   saved = new Map<string, { id: string; pos: THREE.Vector3; quat: THREE.Quaternion; owner: string | null; age: number }[]>();
   candleState = new Map<string, number[]>();
+  /** building shells (exterior, colliders, front doors) */
   nearR = 140;
+  /** detailed exterior instead of the merged far box */
   detailR = 115;
+  /** furnished interiors */
+  interiorR = 48;
+  shells: BatchPool;
   /** positions of characters near doors (set by the game each frame) */
   people: THREE.Vector3[] = [];
   constructor(public world: World, public phys: Physics, public scene: THREE.Scene, public props: PropManager, towns: Towns) {
     this.towns = towns;
-    scene.add(this.structures, this.lod);
+    this.shells = new BatchPool((k) => material(k), (bm, k) => {
+      if (k.startsWith('glass') || k.startsWith('flame')) { bm.layers.set(1); bm.renderOrder = 5; bm.castShadow = false; bm.sortObjects = true; }
+    });
+    scene.add(this.structures, this.lod, this.shells.group);
+    this.structures.matrixAutoUpdate = false; this.lod.matrixAutoUpdate = false;
   }
 
   /** Build static fortifications, bridges, docks and the far-LOD town meshes. */
   buildStatic() {
     const ground = (x: number, z: number) => this.world.heightAt(x, z);
     const add = (s: StructModel) => {
-      for (const m of meshesFrom(s.geo.build())) this.structures.add(m);
+      for (const m of meshesFrom(s.geo.build())) { m.matrixAutoUpdate = false; this.structures.add(m); }
       const body = this.phys.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
       for (const c of s.colliders) {
         const d = RAPIER.ColliderDesc.cuboid(c.h.x, c.h.y, c.h.z).setTranslation(c.c.x, c.c.y, c.c.z).setCollisionGroups(groups(G_STATIC, ALL));
@@ -121,8 +140,8 @@ export class Settlements {
       this.buildTownLod(p);
     }
     for (const b of this.world.bridges) add(buildBridge(b, ground));
+    this.structures.updateMatrixWorld(true);
   }
-
   private buildTownLod(p: TownPlan) {
     // simple boxes + gable roofs for every building of the town, merged per material
     const g = new GeoBuilder();
@@ -176,7 +195,7 @@ export class Settlements {
       };
       m.customProgramCacheKey = () => 'lod-' + k + '-' + n;
       const mesh = new THREE.Mesh(geo, m);
-      mesh.castShadow = true; mesh.receiveShadow = true;
+      mesh.castShadow = true; mesh.receiveShadow = true; mesh.matrixAutoUpdate = false;
       this.lod.add(mesh);
       meshes.push(mesh);
     }
@@ -191,25 +210,37 @@ export class Settlements {
     t.flags.needsUpdate = true;
   }
 
-  /** Stream buildings around the player; build at most `budget` per call. */
+  /** Stream buildings around the player; build at most `budget` shells/interiors per call. */
   update(player: THREE.Vector3, budget = 1) {
     for (const p of this.towns.plans) {
       const d = Math.hypot(p.site.x - player.x, p.site.z - player.z);
-      if (d > p.site.r + this.nearR + 60) {
-        for (const b of p.buildings) if (this.live.has(b.id)) this.unload(b);
+      if (d > p.siteR + this.nearR + 60) {
+        if (p.anyLive) { for (const b of p.buildings) if (this.live.has(b.id)) this.unload(b); p.anyLive = false; }
         continue;
       }
+      p.anyLive = true;
       for (const b of p.buildings) {
         const db = Math.hypot(b.x - player.x, b.z - player.z);
-        const isLive = this.live.has(b.id);
-        if (db < this.nearR && !isLive && !this.queue.includes(b)) this.queue.push(b);
-        else if (db > this.nearR + 40 && isLive) this.unload(b);
+        const l = this.live.get(b.id);
+        if (!l) { if (db < this.nearR && !this.queued.has(b)) { this.queue.push(b); this.queued.add(b); } continue; }
+        if (db > this.nearR + 40) { this.unload(b); continue; }
+        if (!l.furnished && db < this.interiorR && !this.queued.has(b)) { this.queue.push(b); this.queued.add(b); }
+        else if (l.furnished && db > this.interiorR + 16) this.unfurnish(l);
       }
     }
-    this.queue.sort((a, b) => Math.hypot(a.x - player.x, a.z - player.z) - Math.hypot(b.x - player.x, b.z - player.z));
-    for (let i = 0; i < budget && this.queue.length; i++) {
+    if (!this.queue.length) return;
+    const dq = (b: Placed) => (b.x - player.x) ** 2 + (b.z - player.z) ** 2;
+    this.queue.sort((a, b) => dq(a) - dq(b));
+    // interiors are heavier: they count double against the budget
+    let spent = 0;
+    while (this.queue.length && (budget <= 0 || spent < budget)) {
       const b = this.queue.shift()!;
-      if (Math.hypot(b.x - player.x, b.z - player.z) < this.nearR + 20 && !this.live.has(b.id)) this.load(b);
+      this.queued.delete(b);
+      const db = Math.sqrt(dq(b));
+      const l = this.live.get(b.id);
+      if (!l) { if (db < this.nearR + 20) { this.load(b); spent += 1; } }
+      else if (!l.furnished && db < this.interiorR + 8) { this.furnish(l); spent += 2; }
+      if (budget <= 0 && !this.queue.length) break;
     }
   }
 
@@ -219,29 +250,23 @@ export class Settlements {
     return m;
   }
 
+  /** The shell: exterior in the shared batches, structural colliders, front doors, hearths. */
   load(b: Placed) {
     const m = this.model(b);
     const root = new THREE.Group();
     root.position.set(b.x, b.y, b.z);
     root.rotation.y = b.yaw;
     root.updateMatrixWorld(true);
-    const exterior = new THREE.Group();
-    exterior.name = 'exterior';
-    root.add(exterior);
-    for (const mesh of meshesFrom(m.exterior.build())) exterior.add(mesh);
+    root.matrixAutoUpdate = false;
     const interior = new THREE.Group();
     interior.name = 'interior';
+    interior.matrixAutoUpdate = false;
     root.add(interior);
-    const addInterior = (geos: Map<string, THREE.BufferGeometry>) => {
-      for (const [k, geo] of geos) {
-        const mesh = new THREE.Mesh(geo, material(k.includes('|in:1') || k.startsWith('flame') || k.startsWith('glass') ? k : k + '|in:1'));
-        mesh.castShadow = false; mesh.receiveShadow = true;
-        if (k.startsWith('glass') || k.startsWith('flame')) mesh.layers.set(1);
-        interior.add(mesh);
-      }
-    };
-    addInterior(m.interior.build());
+    root.updateMatrixWorld(true);
     this.scene.add(root);
+    // the subtree is static: skip it in the per-frame scene-graph walk (doors and the near interior update themselves)
+    root.matrixWorldAutoUpdate = false;
+    const shell = this.shells.add(m.exterior.build(), root.matrixWorld, false);
     const body = this.phys.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(b.x, b.y, b.z).setRotation(root.quaternion));
     for (const c of m.colliders) {
       const d = RAPIER.ColliderDesc.cuboid(Math.max(0.01, c.h.x), Math.max(0.01, c.h.y), Math.max(0.01, c.h.z)).setTranslation(c.c.x, c.c.y, c.c.z).setCollisionGroups(groups(G_STATIC, ALL));
@@ -249,9 +274,28 @@ export class Settlements {
       const col = this.phys.world.createCollider(d, body);
       this.phys.owners.set(col.handle, { kind: 'building', building: b });
     }
-    const live: LiveBuilding = { placed: b, model: m, root, body, doors: [], furniture: [], props: [], fires: [], bedOwners: [] };
-    for (const d of m.doors) live.doors.push(new Door(this.phys, d.exterior ? root : interior, d.pos, d.yaw, d.w, d.h, d.hinge, d.exterior, b.owner));
-    // furniture
+    const live: LiveBuilding = { placed: b, model: m, root, body, doors: [], furniture: [], props: [], fires: [], bedOwners: [], shell, furnished: false, intColliders: [], detailed: false };
+    for (const d of m.doors) if (d.exterior) live.doors.push(new Door(this.phys, root, d.pos, d.yaw, d.w, d.h, d.hinge, true, b.owner));
+    for (const h of m.hearths) live.fires.push(h.clone());
+    for (const dr of live.doors) dr.node.visible = false;
+    this.live.set(b.id, live);
+  }
+
+  /** The furnished interior: inner faces, furniture with working parts, beds, inner doors, belongings. */
+  furnish(live: LiveBuilding) {
+    const b = live.placed, m = live.model, root = live.root, body = live.body;
+    const interior = root.getObjectByName('interior')!;
+    const addInterior = (geos: Map<string, THREE.BufferGeometry>) => {
+      for (const [k, geo] of geos) {
+        const mesh = new THREE.Mesh(geo, material(k.includes('|in:1') || k.startsWith('flame') || k.startsWith('glass') ? k : k + '|in:1'));
+        mesh.castShadow = false; mesh.receiveShadow = true;
+        mesh.matrixAutoUpdate = false;
+        if (k.startsWith('glass') || k.startsWith('flame')) mesh.layers.set(1);
+        interior.add(mesh);
+      }
+    };
+    addInterior(m.interior.build());
+    for (const d of m.doors) if (!d.exterior) live.doors.push(new Door(this.phys, interior, d.pos, d.yaw, d.w, d.h, d.hinge, false, b.owner));
     const fr = furnish(m, b.spec.seed + 17);
     const candles = this.candleState.get(b.id);
     let ci = 0;
@@ -259,6 +303,7 @@ export class Settlements {
     const merged = new GeoBuilder();
     for (const f of fr.furniture) merged.merge(f.model.geo, new THREE.Matrix4().compose(f.pos, new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), f.yaw), new THREE.Vector3(1, 1, 1)));
     addInterior(merged.build());
+    const yq = new THREE.Quaternion();
     for (const f of fr.furniture) {
       const node = new FurnitureNode(f.model, candles ? 0 : 0.1 + mulberry32(b.spec.seed + ci)() * 0.5, 0xf2e8d0, true);
       node.group.position.copy(f.pos);
@@ -266,30 +311,32 @@ export class Settlements {
       interior.add(node.group);
       node.group.updateMatrixWorld(true);
       for (const cd of node.candles) { if (candles && candles[ci] !== undefined) cd.burn = candles[ci]; ci++; }
+      yq.setFromAxisAngle(_up, f.yaw);
       // static colliders for the furniture body (movable parts get their own when open)
       for (const c of f.model.colliders) {
-        const lp = c.c.clone().applyEuler(new THREE.Euler(0, f.yaw, 0)).add(f.pos);
-        const d = RAPIER.ColliderDesc.cuboid(c.h.x, c.h.y, c.h.z).setTranslation(lp.x, lp.y, lp.z).setRotation(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), f.yaw)).setCollisionGroups(groups(G_STATIC, ALL));
+        const lp = c.c.clone().applyQuaternion(yq).add(f.pos);
+        const d = RAPIER.ColliderDesc.cuboid(c.h.x, c.h.y, c.h.z).setTranslation(lp.x, lp.y, lp.z).setRotation(yq).setCollisionGroups(groups(G_STATIC, ALL));
         const col = this.phys.world.createCollider(d, body);
+        live.intColliders.push(col);
         this.phys.owners.set(col.handle, { kind: 'furniture', furniture: node, building: b });
       }
-      // sensor-ish pick boxes for movables so the player can aim at drawers and doors
+      // sensor pick boxes for movables so the player can aim at drawers and doors
       node.movables.forEach((mv) => {
         const s = mv.def.size;
         const center = mv.def.kind === 'drawer' ? new THREE.Vector3(0, 0, -s.z / 2) : mv.def.kind === 'lid' ? new THREE.Vector3(0, 0, s.z / 2) : new THREE.Vector3(-(mv.def.axis.y || 1) * s.x / 2, s.y / 2, 0);
-        const lp = mv.def.pivot.clone().add(center).applyEuler(new THREE.Euler(0, f.yaw, 0)).add(f.pos);
-        const d = RAPIER.ColliderDesc.cuboid(Math.max(0.02, s.x / 2), Math.max(0.02, s.y / 2), Math.max(0.02, s.z / 2 + 0.02)).setTranslation(lp.x, lp.y, lp.z).setRotation(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), f.yaw)).setSensor(true).setCollisionGroups(groups(32, ALL));
+        const lp = mv.def.pivot.clone().add(center).applyQuaternion(yq).add(f.pos);
+        const d = RAPIER.ColliderDesc.cuboid(Math.max(0.02, s.x / 2), Math.max(0.02, s.y / 2), Math.max(0.02, s.z / 2 + 0.02)).setTranslation(lp.x, lp.y, lp.z).setRotation(yq).setSensor(true).setCollisionGroups(groups(32, ALL));
         const col = this.phys.world.createCollider(d, body);
+        live.intColliders.push(col);
         this.phys.owners.set(col.handle, { kind: 'movable', movable: mv as MovableNode, furniture: node, building: b });
       });
       live.furniture.push(node);
-      for (const sp of f.model.sleep ?? []) live.bedOwners.push({ node, sleep: sp.pos.clone().applyEuler(new THREE.Euler(0, f.yaw, 0)).add(f.pos).applyMatrix4(root.matrixWorld), person: null });
+      for (const sp of f.model.sleep ?? []) live.bedOwners.push({ node, sleep: sp.pos.clone().applyQuaternion(yq).add(f.pos).applyMatrix4(root.matrixWorld), person: null });
     }
     // assign beds to household members
     const members = b.household?.members ?? [];
     live.bedOwners.forEach((bo, i) => { bo.person = members[i]?.id ?? null; if (members[i]) members[i].bed = i; });
-    for (const h of m.hearths) live.fires.push(h.clone());
-    // props: restore saved state or spawn the household's belongings
+    // props: restore saved state or spawn the household's belongings (dormant until someone comes near)
     const saved = this.saved.get(b.id);
     const mat = root.matrixWorld;
     if (saved) {
@@ -301,18 +348,18 @@ export class Settlements {
         if (!id) continue;
         const wp = it.pos.clone().applyMatrix4(mat);
         wp.y += 0.03;
-        const p = this.props.spawn(id, wp, new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), r() * 6.28), { owner: b.id, sleep: true });
+        const p = this.props.spawn(id, wp, new THREE.Quaternion().setFromAxisAngle(_up, r() * 6.28), { owner: b.id, sleep: true });
         if (p) { p.age = r() * 24 * (ITEMS[id].food?.spoilDays ?? 1) * 0.5; live.props.push(p); }
       }
     }
-    this.live.set(b.id, live);
-    exterior.visible = false;
+    interior.updateMatrixWorld(true);
+    live.furnished = true;
   }
 
-  unload(b: Placed) {
-    const live = this.live.get(b.id);
-    if (!live) return;
-    // remember props still inside, and the candles' burn
+  /** Drop the furnished interior, remembering where the belongings were left and how far candles burned. */
+  unfurnish(live: LiveBuilding) {
+    if (!live.furnished) return;
+    const b = live.placed;
     const inv = new THREE.Matrix4().copy(live.root.matrixWorld).invert();
     const keep: { id: string; pos: THREE.Vector3; quat: THREE.Quaternion; owner: string | null; age: number }[] = [];
     for (const p of live.props) {
@@ -324,11 +371,28 @@ export class Settlements {
       }
     }
     this.saved.set(b.id, keep);
+    live.props = [];
     this.candleState.set(b.id, live.furniture.flatMap((f) => f.candles.map((c) => c.burn)));
+    for (const c of live.intColliders) this.phys.remove(c);
+    live.intColliders = [];
+    live.doors = live.doors.filter((d) => { if (d.exterior) return true; d.dispose(); return false; });
+    const interior = live.root.getObjectByName('interior')!;
+    for (const c of [...interior.children]) {
+      c.removeFromParent();
+      c.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh && m.geometry && !o.parent?.userData.furniture && !m.userData.shared) m.geometry.dispose(); });
+    }
+    live.furniture = []; live.bedOwners = [];
+    live.furnished = false;
+  }
+
+  unload(b: Placed) {
+    const live = this.live.get(b.id);
+    if (!live) return;
+    this.unfurnish(live);
     for (const d of live.doors) d.dispose();
+    this.shells.remove(live.shell);
     this.phys.removeBody(live.body);
     live.root.removeFromParent();
-    live.root.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh && m.geometry && !m.parent?.userData.furniture) m.geometry.dispose(); });
     this.live.delete(b.id);
     this.setLodHidden(b, false);
   }
@@ -336,17 +400,29 @@ export class Settlements {
   update2(dt: number, hours: number, t: number, cam?: THREE.Vector3) {
     for (const l of this.live.values()) {
       if (cam) {
-        const d = l.root.position.distanceTo(cam);
-        const int = l.root.getObjectByName('interior');
-        if (int) int.visible = d < 28 + Math.max(l.model.spec.w, l.model.spec.d) * 0.5;
-        if (int?.visible) for (const f of l.furniture) for (const mv of f.movables) mv.node.visible = mv.open > 0.01 || mv.node.getWorldPosition(_tmpV).distanceToSquared(cam) < 16 * 16;
+        const d = Math.hypot(l.root.position.x - cam.x, l.root.position.y - cam.y, l.root.position.z - cam.z);
+        const size = Math.max(l.model.spec.w, l.model.spec.d);
+        if (l.furnished) {
+          const int = l.root.children[0];
+          int.visible = d < 28 + size * 0.5;
+          if (int.visible) int.updateMatrixWorld(true);
+          if (int.visible) for (const f of l.furniture) for (const mv of f.movables) mv.node.visible = mv.open > 0.01 || mv.node.getWorldPosition(_tmpV).distanceToSquared(cam) < 16 * 16;
+        }
         // detailed exterior up close, the merged low-detail box beyond
-        const ext = l.root.getObjectByName('exterior');
-        const detailed = d < this.detailR + Math.max(l.model.spec.w, l.model.spec.d);
-        if (ext && ext.visible !== detailed) { ext.visible = detailed; this.setLodHidden(l.placed, detailed); }
+        const detailed = d < this.detailR + size;
+        if (l.detailed !== detailed) {
+          l.detailed = detailed;
+          this.shells.setVisible(l.shell, detailed);
+          this.setLodHidden(l.placed, detailed);
+          for (const dr of l.doors) dr.node.visible = detailed;
+        }
       }
-      for (const d of l.doors) d.update(dt, this.people);
-      for (const f of l.furniture) f.update(dt, hours, t);
+      const near = !!cam && l.root.position.distanceToSquared(cam) < 45 * 45;
+      for (const d of l.doors) {
+        d.update(dt, this.people);
+        if (cam && l.detailed) { const cast = near; if (d.cast !== cast) { d.cast = cast; d.node.traverse((o) => { (o as THREE.Mesh).castShadow = cast; }); } }
+      }
+      if (l.furnished && dt > 0) for (const f of l.furniture) f.update(dt, hours, t);
     }
   }
 
@@ -365,9 +441,16 @@ export class Settlements {
   /** Which live building (if any) contains the point (for interior exposure, trespass). */
   inside(p: THREE.Vector3): LiveBuilding | null {
     for (const l of this.live.values()) {
-      const lp = l.root.worldToLocal(p.clone());
-      if (Math.abs(lp.x) < l.model.spec.w / 2 - 0.1 && Math.abs(lp.z) < l.model.spec.d / 2 - 0.1 && lp.y > 0 && lp.y < l.model.height + 3) return l;
+      const b = l.placed, dx = p.x - b.x, dz = p.z - b.z;
+      const hw = b.spec.w / 2, hd = b.spec.d / 2;
+      if (dx * dx + dz * dz > hw * hw + hd * hd) continue;
+      const ly = p.y - b.y;
+      if (ly <= 0 || ly > l.model.height + 3) continue;
+      const c = Math.cos(b.yaw), s = Math.sin(b.yaw);
+      const lx = dx * c - dz * s, lz = dx * s + dz * c;
+      if (Math.abs(lx) < hw - 0.1 && Math.abs(lz) < hd - 0.1) return l;
     }
     return null;
   }
+
 }

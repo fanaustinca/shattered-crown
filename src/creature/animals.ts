@@ -2,7 +2,7 @@
 // saddlebags; leading by rope and hitching to carts. Birds fly in flocks, land, peck and scatter.
 import * as THREE from 'three';
 import { RAPIER, groups, G_CHAR, G_SENSOR, G_HELD, G_STATIC, ALL, type Physics } from '../physics/physics';
-import { CreatureLib, coatFor, type Rig } from './rig';
+import { CreatureLib, coatFor, AnimLod, releaseRig, type Rig } from './rig';
 import { QuadAnimator, BirdAnimator, type MoveState } from './anim';
 import type { World } from '../world/world';
 import type { Input } from '../core/input';
@@ -23,6 +23,7 @@ export interface GameCtx { physics: Physics; world: World; input: Input; player:
 
 export class Animal implements Seat {
   rig: Rig;
+  lod = new AnimLod();
   anim: QuadAnimator;
   body: RAPIER.RigidBody;
   collider: RAPIER.Collider;
@@ -75,6 +76,7 @@ export class Animal implements Seat {
     this.ctx.physics.removeBody(this.body);
     this.ctx.physics.world.removeCharacterController(this.kcc);
     (this.rig.mesh.material as THREE.Material).dispose();
+    releaseRig(this.rig);
   }
 
   private pickWander() {
@@ -223,7 +225,7 @@ export class Flock {
       ctx.scene.add(rig.root);
     }
   }
-  dispose() { for (const b of this.birds) this.ctx.scene.remove(b.rig.root); }
+  dispose() { for (const b of this.birds) { this.ctx.scene.remove(b.rig.root); releaseRig(b.rig); } }
   update(dt: number) {
     this.t += dt;
     const p = this.ctx.player;
@@ -344,8 +346,8 @@ export class Fauna {
     for (const a of this.all()) {
       // animation LOD: far animals update at a lower rate
       const d = a.st.pos.distanceTo(cam);
-      if (d > 90 && Math.random() > 0.35) continue;
-      a.animate(d > 90 ? dt * 2.8 : dt);
+      const t = a.lod.step(a.rig, d, dt);
+      if (t > 0) a.animate(t);
     }
     for (const f of this.liveFlocks.values()) f.update(dt);
   }

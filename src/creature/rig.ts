@@ -23,6 +23,74 @@ export interface Rig {
   byName: Record<string, THREE.Bone>;
 }
 
+/** Game frame counter (bumped once per rendered frame). */
+export const frameStamp = { n: 0 };
+// one bone-texture upload per skeleton per frame: the renderer would otherwise redo it for every render() pass
+const _skelUpdate = THREE.Skeleton.prototype.update;
+THREE.Skeleton.prototype.update = function (this: THREE.Skeleton & { _gf?: number; _hold?: boolean }) {
+  if (this._gf === frameStamp.n) return;
+  this._gf = frameStamp.n;
+  if (this._hold) return;   // animation LOD skipped this frame: keep last frame's bones
+  _skelUpdate.call(this);
+};
+
+// ---- shared bone atlas ----
+// Every skeleton writes its bone matrices into one float texture, so the GPU gets a single upload per frame
+// instead of one small texture upload per character (each of which costs ~0.1 ms of driver time). The slot
+// offset rides in the otherwise-unused bottom row of each mesh's bindMatrix; the patched skinning chunks read it
+// and use a cleaned bind matrix, so every pass (colour, depth, shadow cascades) agrees.
+const ATLAS_W = 1024, ATLAS_ROWS = 64, BLOCK = 64;           // 256 matrices per row; slots in 64-bone blocks
+const atlasData = new Float32Array(ATLAS_W * ATLAS_ROWS * 4);
+const atlas = new THREE.DataTexture(atlasData, ATLAS_W, ATLAS_ROWS, THREE.RGBAFormat, THREE.FloatType);
+atlas.needsUpdate = true;
+const freeBlocks: number[] = [];
+for (let b = (ATLAS_W * ATLAS_ROWS) / 4 / BLOCK - 1; b >= 0; b--) freeBlocks.push(b * BLOCK);
+THREE.ShaderChunk.skinning_pars_vertex = THREE.ShaderChunk.skinning_pars_vertex
+  .replace('int j = int( i ) * 4;', 'int j = int( i + bindMatrix[ 0 ][ 3 ] ) * 4;')
+  .replace('mat4 getBoneMatrix', 'mat4 cleanBind( mat4 m ) { m[ 0 ][ 3 ] = 0.0; return m; }\n\tmat4 getBoneMatrix');
+THREE.ShaderChunk.skinning_vertex = THREE.ShaderChunk.skinning_vertex.replace('bindMatrix * vec4', 'cleanBind( bindMatrix ) * vec4');
+THREE.ShaderChunk.skinnormal_vertex = THREE.ShaderChunk.skinnormal_vertex.replace('skinMatrix * bindMatrix;', 'skinMatrix * cleanBind( bindMatrix );');
+function atlasBind(mesh: THREE.SkinnedMesh) {
+  const sk = mesh.skeleton as THREE.Skeleton & { _slot?: number };
+  const n = sk.bones.length;
+  if (n > BLOCK || !freeBlocks.length) return;   // falls back to its own bone texture
+  const slot = freeBlocks.pop()!;
+  sk._slot = slot;
+  sk.boneMatrices = atlasData.subarray(slot * 16, (slot + n) * 16);
+  sk.boneTexture = atlas;
+  mesh.bindMatrix.elements[3] = slot;
+}
+/** Return a creature's atlas slot (call when the creature is removed for good). */
+export function releaseRig(rig: Rig) {
+  const sk = rig.mesh.skeleton as THREE.Skeleton & { _slot?: number };
+  if (sk._slot !== undefined) { freeBlocks.push(sk._slot); sk._slot = undefined; }
+}
+// the atlas is shared: never dispose it with a skeleton
+const _skelDispose = THREE.Skeleton.prototype.dispose;
+THREE.Skeleton.prototype.dispose = function (this: THREE.Skeleton & { _slot?: number }) { if (this.boneTexture === atlas) { this.boneTexture = null; return; } _skelDispose.call(this); };
+
+/** Animation LOD: full rate up close, every 2nd frame at mid range, every 4th far away (with the elapsed time
+ *  accumulated, so motion speed is unchanged). Skipped frames also skip the bone matrix walk and upload. */
+export class AnimLod {
+  private acc = 0;
+  private k = Math.floor(Math.random() * 4);
+  step(rig: Rig, dist: number, dt: number): number {
+    const every = dist < 35 ? 1 : dist < 80 ? 2 : 4;
+    this.acc += dt;
+    if (++this.k % every !== 0) {
+      rig.root.matrixWorldAutoUpdate = false;
+      (rig.mesh.skeleton as THREE.Skeleton & { _hold?: boolean })._hold = true;
+      return 0;
+    }
+    rig.root.matrixWorldAutoUpdate = true;
+    (rig.mesh.skeleton as THREE.Skeleton & { _hold?: boolean })._hold = false;
+    // a person-sized shadow is under a pixel or two beyond ~70 m: skip it in the cascades
+    rig.mesh.castShadow = dist < 70 * Math.max(1, rig.anatomy.kind === 'biped' ? 1 : 1.4);
+    const a = this.acc; this.acc = 0;
+    return a;
+  }
+}
+
 const VERT_PARS = `attribute float aRegion; varying vec3 vRest; varying float vRegion; varying vec3 vRestN;`;
 const VERT_MAIN = `vRest = position; vRegion = aRegion; vRestN = normal;`;
 const FRAG_PARS = /* glsl */ `
@@ -206,6 +274,7 @@ export class CreatureLib {
     root.add(mesh);
     root.updateMatrixWorld(true);
     mesh.bind(new THREE.Skeleton(bones));
+    atlasBind(mesh);
     for (const e of a.eyes ?? []) {
       const eye = new THREE.Mesh(this.eyeGeo, this.eyeMat);
       eye.scale.setScalar(e.r);

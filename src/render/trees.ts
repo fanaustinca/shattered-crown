@@ -4,7 +4,7 @@ import type { World } from '../world/world';
 import { SITES, HALF } from '../world/layout';
 import { generateTree, foliageTexture, birchBark, type Species, type TreeParts } from './treegen';
 import { pbr } from './textures';
-import { sharedUniforms } from './pipeline';
+import { sharedUniforms, LAYER_SHADOW_ONLY } from './pipeline';
 import { skyUniforms } from './sky';
 import type { Quality } from '../core/settings';
 import type { Lighting } from './lighting';
@@ -16,7 +16,7 @@ const CHUNK = 128;
 const FRAMES = 8;            // impostor views around the tree
 const FRAME_PX = 256;
 
-interface TreeType { species: Species; variant: number; parts: TreeParts; lod1Wood: THREE.BufferGeometry; lod1Leaves: THREE.BufferGeometry; frameBase: number; size: THREE.Vector2; }
+interface TreeType { species: Species; variant: number; parts: TreeParts; lod1Wood: THREE.BufferGeometry; lod1Leaves: THREE.BufferGeometry; shadowLeaves: THREE.BufferGeometry; frameBase: number; size: THREE.Vector2; }
 
 export const treeUniforms = {
   uTreeWind: { value: 0.5 },
@@ -106,7 +106,7 @@ export class Trees {
   count = 0;
   chunks = new Map<number, number[]>(); // chunk key -> tree indices
   lod0: { wood: THREE.InstancedMesh; leaves: THREE.InstancedMesh }[] = [];
-  lod1: { wood: THREE.InstancedMesh; leaves: THREE.InstancedMesh }[] = [];
+  lod1: { wood: THREE.InstancedMesh; leaves: THREE.InstancedMesh; shadow: THREE.InstancedMesh }[] = [];
   impostors!: THREE.Mesh;
   impAttr!: THREE.InstancedBufferAttribute;
   impMax = 260000;
@@ -161,6 +161,8 @@ export class Trees {
           species: sp, variant: v, parts,
           lod1Wood: sp === 'bush' ? parts.wood : trunkOnly(parts.wood),
           lod1Leaves: sp === 'spruce' ? thinCards(parts.leaves, 1, 1.0) : thinCards(parts.leaves, 2, 1.25),
+          // mid-distance shadows come from a sparser card set (soft at that range anyway), drawn only into shadow maps
+          shadowLeaves: sp === 'spruce' ? thinCards(parts.leaves, 2, 1.3) : thinCards(parts.leaves, 4, 1.55),
           frameBase: 0, size: new THREE.Vector2(),
         });
       }
@@ -258,9 +260,10 @@ export class Trees {
       const depth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: (lm as THREE.MeshStandardMaterial).map, alphaTest: 0.45 });
       addWind(depth, undefined, true);
       const l0 = mk(t.parts.leaves, lm, cap0, true); l0.customDepthMaterial = depth;
-      const l1 = mk(t.lod1Leaves, lm, cap1, true); l1.customDepthMaterial = depth;
+      const l1 = mk(t.lod1Leaves, lm, cap1, false);
+      const sh = mk(t.shadowLeaves, lm, cap1, true); sh.customDepthMaterial = depth; sh.layers.set(LAYER_SHADOW_ONLY);
       this.lod0.push({ wood: mk(t.parts.wood, wm, cap0, true), leaves: l0 });
-      this.lod1.push({ wood: mk(t.lod1Wood, wm, cap1, false), leaves: l1 });
+      this.lod1.push({ wood: mk(t.lod1Wood, wm, cap1, false), leaves: l1, shadow: sh });
     }
   }
 
@@ -409,17 +412,28 @@ export class Trees {
   }
   impY!: THREE.InstancedBufferAttribute;
 
-  update(cam: THREE.Vector3, force = false) {
+  private lastFwd = new THREE.Vector3();
+  update(cam: THREE.Vector3, force = false, camera?: THREE.PerspectiveCamera) {
     const u = this.impMat.uniforms;
     u.uSunLight.value.copy(this.lighting.sunColor);
     const amb = (u.uAmb.value as THREE.Color);
     const d = this.lighting.dayFactor;
     amb.setRGB(0.18 * d + 0.012, 0.24 * d + 0.016, 0.34 * d + 0.03).multiplyScalar(1.6);
-    if (!force && cam.distanceTo(this.lastCam) < 20) return;
+    // mid-distance trees are culled to the view (with a generous margin); rebuild on movement or turning
+    const fwd = _fwd.set(0, 0, -1);
+    if (camera) fwd.applyQuaternion(camera.quaternion);
+    const flat = Math.hypot(fwd.x, fwd.z);
+    const cull = !!camera && flat > 0.55;
+    const turned = cull && (this.lastFwd.x * fwd.x + this.lastFwd.z * fwd.z) / Math.max(1e-3, flat * Math.hypot(this.lastFwd.x, this.lastFwd.z)) < Math.cos(0.12);
+    if (!force && cam.distanceTo(this.lastCam) < 20 && !turned) return;
     this.lastCam.copy(cam);
+    this.lastFwd.copy(fwd);
+    const fx = fwd.x / Math.max(flat, 1e-3), fz = fwd.z / Math.max(flat, 1e-3);
+    const halfH = camera ? Math.atan(Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.aspect) : Math.PI;
+    const cosCone = Math.cos(Math.min(Math.PI, halfH + 0.42));
     const near0 = this.near0, near1 = this.q.treeDistance, far = 3600;
     u.uNear.value = near1;
-    const counts0 = new Array(this.types.length).fill(0), counts1 = new Array(this.types.length).fill(0);
+    const counts0 = new Array(this.types.length).fill(0), counts1 = new Array(this.types.length).fill(0), countsS = new Array(this.types.length).fill(0);
     const m = new THREE.Matrix4(), qt = new THREE.Quaternion(), sc = new THREE.Vector3(), ps = new THREE.Vector3();
     const imp = this.impAttr.array as Float32Array, impY = this.impY.array as Float32Array;
     let ni = 0;
@@ -448,12 +462,13 @@ export class Trees {
             this.lod0[ty].wood.setMatrixAt(k, m); this.lod0[ty].leaves.setMatrixAt(k, m);
           }
         } else if (dist < near1) {
-          const k = counts1[ty]++;
-          if (k < this.lod1[ty].wood.instanceMatrix.count) {
-            qt.setFromAxisAngle(_up, D[t * 6 + 3]); sc.setScalar(s); ps.set(x, y, z);
-            m.compose(ps, qt, sc);
-            this.lod1[ty].wood.setMatrixAt(k, m); this.lod1[ty].leaves.setMatrixAt(k, m);
-          }
+          qt.setFromAxisAngle(_up, D[t * 6 + 3]); sc.setScalar(s); ps.set(x, y, z);
+          m.compose(ps, qt, sc);
+          const ks = countsS[ty]++;
+          if (ks < this.lod1[ty].shadow.instanceMatrix.count) this.lod1[ty].shadow.setMatrixAt(ks, m);
+          const visible = !cull || ((x - cam.x) * fx + (z - cam.z) * fz) / dist > cosCone;
+          const k = visible ? counts1[ty]++ : 1e9;
+          if (k < this.lod1[ty].wood.instanceMatrix.count) { this.lod1[ty].wood.setMatrixAt(k, m); this.lod1[ty].leaves.setMatrixAt(k, m); }
           // overlap band: impostor fades in over the last 8% of the mesh range
           if (dist > near1 * 0.92 && ni < this.impMax) {
             imp[ni * 4] = x; imp[ni * 4 + 1] = z; imp[ni * 4 + 2] = D[t * 6 + 3]; imp[ni * 4 + 3] = ty * 1000 + Math.min(999, Math.round(s * 100)); impY[ni] = y; ni++;
@@ -468,8 +483,10 @@ export class Trees {
       for (const [lod, counts] of [[this.lod0, counts0], [this.lod1, counts1]] as const) {
         const c = Math.min(counts[ty], lod[ty].wood.instanceMatrix.count);
         lod[ty].wood.count = c; lod[ty].leaves.count = c;
-        lod[ty].wood.instanceMatrix.needsUpdate = true; lod[ty].leaves.instanceMatrix.needsUpdate = true;
+        for (const im of [lod[ty].wood, lod[ty].leaves]) { im.instanceMatrix.clearUpdateRanges(); im.instanceMatrix.addUpdateRange(0, c * 16); im.instanceMatrix.needsUpdate = true; }
       }
+      const sh = this.lod1[ty].shadow, cs = Math.min(countsS[ty], sh.instanceMatrix.count);
+      sh.count = cs; sh.instanceMatrix.clearUpdateRanges(); sh.instanceMatrix.addUpdateRange(0, cs * 16); sh.instanceMatrix.needsUpdate = true;
     }
     (this.impostors.geometry as THREE.InstancedBufferGeometry).instanceCount = ni;
     this.impAttr.needsUpdate = true; this.impY.needsUpdate = true;
@@ -478,3 +495,4 @@ export class Trees {
   }
 }
 const _up = new THREE.Vector3(0, 1, 0);
+const _fwd = new THREE.Vector3();

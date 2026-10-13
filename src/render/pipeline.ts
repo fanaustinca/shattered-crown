@@ -15,6 +15,8 @@ import type { Quality } from '../core/settings';
 
 export const LAYER_OPAQUE = 0;
 export const LAYER_WATER = 1;
+/** objects that only render into shadow maps (cheap shadow proxies) */
+export const LAYER_SHADOW_ONLY = 2;
 
 export const sharedUniforms = {
   tSceneColor: { value: null as THREE.Texture | null },
