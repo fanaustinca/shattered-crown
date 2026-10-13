@@ -182,6 +182,7 @@ export class Game {
     progress(0.84, 'Planting the forests');
     await tick();
     this.trees = new Trees(this.world, this.q, this.lighting, this.renderer);
+    this.trees.orchards = this.towns.plans.flatMap((p) => p.orchards);
     this.trees.build();
     this.scene.add(this.trees.group);
     this.water = new Water(this.q);
@@ -204,12 +205,12 @@ export class Game {
     this.props.coldAt = (p) => { const l = this.settlements.inside(p); return !!l && p.y < l.root.position.y + 0.3; };
     this.player = new Player(this.physics, this.world, this.input);
     const start = siteById('aurelhold');
-    this.player.spawn(start.x + 290, start.z + 14, Math.PI / 2);
+    this.player.spawn(start.x + 8, start.z + 10, Math.PI);
     this.ctx = {
       physics: this.physics, world: this.world, input: this.input, player: this.player, creatures: this.creatures, scene: this.scene,
       groundAt: (x, z, fromY) => this.groundAt(x, z, fromY), hours: () => this.hours, sound: (n, p, v) => this.audio.play(n, p, v),
     };
-    this.fauna = new Fauna(this.ctx);
+    this.fauna = new Fauna(this.ctx, this.towns);
     this.interaction = new Interaction(this);
     this.playerBody = new PlayerBody(this);
     this.combat = new Combat(this);
@@ -218,6 +219,7 @@ export class Game {
     this.ui = new UI(this);
     this.law = new Law(this);
     this.residents = new Residents(this);
+    this.residents.cap = { low: 30, medium: 55, high: 80, ultra: 100 }[this.q.name];
     this.economy = new Economy(this);
     this.war = new War(this);
     this.wantedPosters = new WantedPosters(this);
@@ -347,6 +349,7 @@ export class Game {
     this.law.update(dt);
     this.economy.update();
     this.war.update(dt);
+    this.settlements.people = [this.player.pos, ...this.residents.live.map((n) => n.st.pos)];
     this.settlements.update(this.freeCam ? this.camera.position : this.player.pos, 2);
     this.settlements.update2(dt, dt * this.daySpeed * (this.sleepUntil >= 0 ? 900 : 1), this.time, this.camera.position);
     this.fauna.animate(dt);

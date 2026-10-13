@@ -19,8 +19,9 @@ class Grid {
   rect(cx: number, cz: number, hw: number, hd: number, test: boolean): boolean {
     const i0 = Math.floor((cx - hw - this.x0) / this.cell), i1 = Math.ceil((cx + hw - this.x0) / this.cell);
     const j0 = Math.floor((cz - hd - this.z0) / this.cell), j1 = Math.ceil((cz + hd - this.z0) / this.cell);
-    if (i0 < 0 || j0 < 0 || i1 > this.nx || j1 > this.nz) return false;
-    for (let j = j0; j < j1; j++) for (let i = i0; i < i1; i++) {
+    if (test && (i0 < 0 || j0 < 0 || i1 > this.nx || j1 > this.nz)) return false;
+    // marking clamps to the room, so keep-out zones that straddle a partition still apply
+    for (let j = Math.max(0, j0); j < Math.min(this.nz, j1); j++) for (let i = Math.max(0, i0); i < Math.min(this.nx, i1); i++) {
       if (test) { if (this.cells[j * this.nx + i]) return false; } else this.cells[j * this.nx + i] = 1;
     }
     return true;
@@ -47,7 +48,12 @@ export function furnish(model: BuildingModel, seed: number): { furniture: Placem
     const rm = rm0 as Ext;
     const g = new Grid(rm.min.x, rm.min.y, rm.max.x, rm.max.y);
     // keep clear: stairs footprint, doors, hearth
-    if (rm.floor < model.spec.floors - 1 || rm.floor >= 1) g.rect(rm.stairX, (rm.stairZ0 + rm.stairZ1) / 2, rm.stairW / 2 + 0.25, Math.abs(rm.stairZ0 - rm.stairZ1) / 2 + 0.7, false);
+    // open-fronted workshops keep their whole front clear
+    if (model.spec.type === 'smithy' && rm.floor === 0) g.rect((rm.min.x + rm.max.x) / 2, rm.max.y - 0.6, (rm.max.x - rm.min.x) / 2, 1.3, false);
+    // the stair run plus a landing at the bottom and the top must stay clear
+    if (model.spec.floors > 1) g.rect(rm.stairX, (rm.stairZ0 + rm.stairZ1) / 2, rm.stairW / 2 + 0.35, Math.abs(rm.stairZ0 - rm.stairZ1) / 2 + 1.2, false);
+    // and a walkway from the front door to the foot of the stairs
+    if (model.spec.floors > 1 && rm.floor === 0) g.rect((rm.stairX + 0) / 2, rm.stairZ0 - 0.2, Math.abs(rm.stairX) / 2 + 0.6, 0.7, false);
     for (const d of model.doors) if (Math.abs(d.pos.y - rm.y) < 0.5) g.rect(d.pos.x, d.pos.z, 0.9, 0.9, false);
     if (rm.hasHearth && rm.floor === 0) { const hx = rm.hearthSide === 'e' ? rm.max.x : rm.min.x; g.rect(hx, model.rooms[0] ? -model.spec.d / 2 + Math.min(model.spec.d * 0.35, 2.2) : 0, 1.6, 1.6, false); }
     // place helpers
@@ -87,6 +93,8 @@ export function furnish(model: BuildingModel, seed: number): { furniture: Placem
       else if (side === 1) { yaw = Math.PI; x = rm.min.x + 0.6 + along * (rm.max.x - rm.min.x - 1.2); z = rm.max.y - 0.05; }
       else if (side === 2) { yaw = Math.PI / 2; x = rm.min.x + 0.05; z = rm.min.y + 0.6 + along * (rm.max.y - rm.min.y - 1.2); }
       else { yaw = -Math.PI / 2; x = rm.max.x - 0.05; z = rm.min.y + 0.6 + along * (rm.max.y - rm.min.y - 1.2); }
+      // never over the staircase
+      if (model.spec.floors > 1 && Math.abs(x - rm.stairX) < rm.stairW + 0.5 && z < Math.max(rm.stairZ0, rm.stairZ1) + 1 && z > Math.min(rm.stairZ0, rm.stairZ1) - 1) return;
       // avoid windows
       for (const w of model.windows) if (Math.hypot(w.pos.x - x, w.pos.z - z) < 1.0 && Math.abs(w.pos.y - (rm.y + 1.5)) < 1.5) return;
       out.push({ model: fm, pos: new THREE.Vector3(x, rm.y, z), yaw, room: ri, mods: m, wallMounted: true });

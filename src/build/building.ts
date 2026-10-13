@@ -35,15 +35,19 @@ export interface BuildingModel {
 const PLINTH = 0.35, FH = 3.0, T = 0.32;
 
 function mats(s: BuildingSpec) {
-  const wallOut = s.style === 'stone' ? 'mat:medieval_blocks_02' : s.style === 'dark' ? 'mat:castle_wall_slates' : s.style === 'rustic' ? 'mat:stacked_stone_wall' : s.style === 'plaster' ? 'mat:white_plaster_rough_01' : 'mat:plastered_wall_02';
-  const ground = s.style === 'timber' || s.style === 'plaster' ? (s.kingdom === 'ironreach' ? 'mat:stacked_stone_wall' : 'mat:medieval_blocks_02') : wallOut;
+  const v = s.seed % 4;
+  const plasterTints = ['f4ecdc', 'efe0c4', 'e8dcc8', 'f8f2e6'];
+  const wallOut = (s.style === 'stone' ? ['mat:medieval_blocks_02', 'mat:castle_wall_varriation|tint:d8d0c0', 'mat:white_sandstone_blocks_02', 'mat:castle_brick_02_white|tint:e0d8c8'][v]
+    : s.style === 'dark' ? ['mat:castle_wall_slates', 'mat:defense_wall|tint:9a9aa0', 'mat:stacked_stone_wall|tint:8a8a90', 'mat:castle_wall_slates|tint:b0b0b4'][v]
+      : s.style === 'rustic' ? 'mat:stacked_stone_wall' : s.style === 'plaster' ? `mat:white_plaster_rough_01|tint:${plasterTints[v]}` : `mat:plastered_wall_02|tint:${plasterTints[v]}`) + '|wx:0.8';
+  const ground = (s.style === 'timber' || s.style === 'plaster' ? (s.kingdom === 'ironreach' ? 'mat:stacked_stone_wall' : ['mat:medieval_blocks_02', 'mat:stacked_stone_wall|tint:d8c8b0'][v % 2]) : wallOut.replace('|wx:0.8', '')) + '|wx:1';
   const roof = s.roof === 'thatch' ? 'mat:thatch_roof_angled' : s.roof === 'tile' ? 'mat:clay_roof_tiles_02' : s.roof === 'slate' ? 'mat:roof_slates_02' : 'mat:reed_roof_04';
   return {
     wallOut, ground, roof, inner: s.wealth > 0.6 ? 'mat:clay_plaster|in:1' : 'mat:white_plaster_rough_01|tint:e8dcc4|in:1', timber: 'wood:dark|stain:ebony|fin:raw',
     floor: s.wealth > 0.5 ? 'mat:old_wood_floor' : s.type === 'stable' || s.type === 'barn' || s.type === 'smithy' ? 'mat:clay_floor_001' : 'mat:plank_flooring_02',
     stoneFloor: 'mat:monastery_stone_floor', beam: 'wood:dark|stain:walnut|fin:raw', plinth: 'mat:stacked_stone_wall', roofIn: 'wood:planks|stain:walnut|fin:raw',
     frame: 'wood:dark|stain:ebony|fin:oiled', glass: 'glass|c:b8c8b0', shutter: s.kingdom === 'ironreach' ? 'wood:weathered|stain:ebony|fin:raw' : 'mat:wood_shutter',
-    chimney: 'mat:stacked_stone_wall', hearth: 'mat:castle_brick_07',
+    chimney: 'mat:stacked_stone_wall|wx:1.2', hearth: 'mat:castle_brick_07',
   };
 }
 
@@ -373,4 +377,68 @@ function partitionX(g: GeoBuilder, model: BuildingModel, xs: number, z0: number,
   wallColliders(model, m, y, len, h, 0.14, op);
   void stairZ0;
   model.doors.push({ pos: new THREE.Vector3(xs, y, z0 + dz), yaw: Math.PI / 2, w: 1.0, h: 2.05, exterior: false, hinge: 1 });
+}
+
+/**
+ * Indoor route planning over the room graph: rooms are connected by interior doorways and stairs;
+ * the front door connects to the outside. Returns local-space waypoints.
+ */
+export function navPath(m: BuildingModel, from: THREE.Vector3 | 'outside', to: THREE.Vector3 | 'outside'): THREE.Vector3[] {
+  const rooms = m.rooms.filter((r) => r.floor < m.spec.floors);
+  const OUT = -1;
+  const floorOf = (y: number) => m.floorY.reduce((f, fy, i) => (y > fy - 0.6 ? i : f), 0);
+  const roomAt = (p: THREE.Vector3) => {
+    const f = floorOf(p.y);
+    let best = -1, bd = 1e9;
+    rooms.forEach((r, i) => {
+      if (r.floor !== f) return;
+      const dx = Math.max(r.min.x - p.x, 0, p.x - r.max.x), dz = Math.max(r.min.y - p.z, 0, p.z - r.max.y);
+      const d = Math.hypot(dx, dz);
+      if (d < bd) { bd = d; best = i; }
+    });
+    return best;
+  };
+  type Edge = { to: number; pts: THREE.Vector3[] };
+  const adj = new Map<number, Edge[]>();
+  const link = (a: number, b: number, ab: THREE.Vector3[]) => {
+    (adj.get(a) ?? adj.set(a, []).get(a)!).push({ to: b, pts: ab });
+    (adj.get(b) ?? adj.set(b, []).get(b)!).push({ to: a, pts: [...ab].reverse() });
+  };
+  const center = (i: number) => i === OUT ? new THREE.Vector3(0, m.floorY[0], m.spec.d / 2 + 3) : new THREE.Vector3((rooms[i].min.x + rooms[i].max.x) / 2, rooms[i].y, (rooms[i].min.y + rooms[i].max.y) / 2);
+  for (const d of m.doors) {
+    const f = floorOf(d.pos.y + 0.1);
+    const n = Math.abs(Math.sin(d.yaw)) > 0.5 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 0, 1);
+    const pa = d.pos.clone().addScaledVector(n, 0.8), pb = d.pos.clone().addScaledVector(n, -0.8);
+    pa.y = pb.y = m.floorY[f];
+    if (d.exterior) {
+      // the outside is on the +z side of the front door
+      const inside = d.pos.clone().setZ(d.pos.z - 1.0).setY(m.floorY[0]);
+      const ri = roomAt(inside);
+      if (ri >= 0) link(ri, OUT, [inside, d.pos.clone().setY(m.floorY[0]), d.pos.clone().setZ(d.pos.z + 1.6).setY(m.floorY[0])]);
+      continue;
+    }
+    const ra = roomAt(pa), rb = roomAt(pb);
+    if (ra >= 0 && rb >= 0 && ra !== rb) link(ra, rb, [pa, d.pos.clone().setY(m.floorY[f]), pb]);
+  }
+  m.stairs.forEach((s, i) => {
+    const a = roomAt(s.from.clone().setY(m.floorY[i])), b = roomAt(s.to.clone().setY(m.floorY[i + 1]));
+    if (a >= 0 && b >= 0) link(a, b, [s.from.clone(), s.to.clone()]);
+  });
+  const start = from === 'outside' ? OUT : roomAt(from), goal = to === 'outside' ? OUT : roomAt(to);
+  // BFS
+  const prev = new Map<number, { from: number; e: Edge }>();
+  const q = [start]; const seen = new Set([start]);
+  while (q.length) {
+    const c = q.shift()!;
+    if (c === goal) break;
+    for (const e of adj.get(c) ?? []) if (!seen.has(e.to)) { seen.add(e.to); prev.set(e.to, { from: c, e }); q.push(e.to); }
+  }
+  const chain: Edge[] = [];
+  let c = goal;
+  while (c !== start && prev.has(c)) { const p = prev.get(c)!; chain.unshift(p.e); c = p.from; }
+  const out: THREE.Vector3[] = [];
+  for (const e of chain) out.push(...e.pts.map((p) => p.clone()));
+  if (to !== 'outside') out.push(to.clone());
+  else if (!chain.length) out.push(center(OUT));
+  return out;
 }

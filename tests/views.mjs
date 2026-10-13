@@ -39,3 +39,9 @@ VIEWS.push(
   { name: 'interior-1', time: 11, setup: (SC) => { window.__int = SC.interior('millbrook', 0, 0); } },
   { name: 'interior-2', time: 21, setup: (SC) => { window.__int = SC.interior('aurelhold', 3, 1); } },
 );
+VIEWS.push(
+  { name: 'wall-close', time: 10, setup: (SC) => { const s = SC.site('whitecrest').site; SC.stream(s.x, s.z); const a = (s.gateYaw ?? 0) + 0.5, rr = s.r * 0.82; SC.view(s.x + Math.cos(a) * (rr + 30), 'g+4', s.z + Math.sin(a) * (rr + 30), s.x + Math.cos(a) * rr, 'g+8', s.z + Math.sin(a) * rr); } },
+  { name: 'wall-dark', time: 14, setup: (SC) => { const s = SC.site('ironspire').site; SC.stream(s.x, s.z); const a = 2.0, rr = s.r * 0.99; SC.view(s.x + Math.cos(a) * (rr + 40), 'g+6', s.z + Math.sin(a) * (rr + 40), s.x + Math.cos(a) * rr, 'g+8', s.z + Math.sin(a) * rr); } },
+  { name: 'farm', time: 11, setup: (SC) => { const pl = SC.site('millbrook'); const pd = pl.paddocks[0]; SC.teleport(pd.x + 25, pd.z + 25); SC.hold([], 3); SC.view(pd.x + 30, 'g+9', pd.z + 30, pd.x, 'g+1', pd.z); } },
+  { name: 'town-street', time: 16, setup: (SC) => { const s = SC.site('millbrook').site; SC.teleport(s.x + 3, s.z + 3); SC.hold([], 2); SC.view(s.x + 2, 'g+1.7', s.z + 2, s.x + 30, 'g+2', s.z + 18); } },
+);

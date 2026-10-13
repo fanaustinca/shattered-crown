@@ -6,7 +6,7 @@ import { RAPIER, groups, G_STATIC, ALL, type Physics } from '../physics/physics'
 import type { World } from '../world/world';
 import { Towns, type Placed, type TownPlan } from '../world/towns';
 import { generateBuilding, type BuildingModel } from './building';
-import { buildWalls, buildBridge, buildDock, type StructModel } from './structures';
+import { buildWalls, buildBridge, buildDock, fenceRect, well, stall, haystack, lampPost, type StructModel } from './structures';
 import { GeoBuilder } from './geom';
 import { material, meshesFrom } from '../props/palette';
 import { furnish } from '../props/interior';
@@ -46,8 +46,15 @@ export class Door {
     phys.owners.set(c.handle, { kind: 'door', door: this });
     this.node.userData.door = this;
   }
-  toggle() { if (this.locked) return false; this.target = this.target > 0.5 ? 0 : 1; return true; }
-  update(dt: number) {
+  toggle() { if (this.locked) return false; this.target = this.target > 0.5 ? 0 : 1; this.autoClose = 0; return true; }
+  /** seconds until an NPC-opened door swings shut (only once the doorway is clear) */
+  autoClose = 0;
+  update(dt: number, people?: THREE.Vector3[]) {
+    if (this.autoClose > 0) {
+      const dp = this.node.getWorldPosition(_tmpV);
+      const busy = people?.some((p) => p.distanceToSquared(dp) < 2.4 * 2.4);
+      if (!busy) { this.autoClose -= dt; if (this.autoClose <= 0) this.target = 0; }
+    }
     if (Math.abs(this.target - this.open) < 1e-3) return;
     this.open += Math.sign(this.target - this.open) * Math.min(Math.abs(this.target - this.open), dt * 1.6);
     const ease = this.open * this.open * (3 - 2 * this.open);
@@ -77,7 +84,9 @@ export class Settlements {
   saved = new Map<string, { id: string; pos: THREE.Vector3; quat: THREE.Quaternion; owner: string | null; age: number }[]>();
   candleState = new Map<string, number[]>();
   nearR = 140;
-  detailR = 80;
+  detailR = 115;
+  /** positions of characters near doors (set by the game each frame) */
+  people: THREE.Vector3[] = [];
   constructor(public world: World, public phys: Physics, public scene: THREE.Scene, public props: PropManager, towns: Towns) {
     this.towns = towns;
     scene.add(this.structures, this.lod);
@@ -99,6 +108,16 @@ export class Settlements {
     for (const p of this.towns.plans) {
       if (p.walls) add(buildWalls(p.walls, ground));
       for (const d of p.docks) add(buildDock(d.x, d.z, d.yaw, d.len, ground));
+      // the life of the town: fences, wells, market stalls, haystacks, street torches
+      const town: StructModel = { geo: new GeoBuilder(), colliders: [], gates: [], torches: [] };
+      for (const gd of p.gardens) fenceRect(town, gd.x, gd.z, gd.w + 0.4, gd.d + 0.4, gd.yaw, ground, 'wood:weathered|stain:honey|fin:raw', 1.4);
+      for (const pd of p.paddocks) fenceRect(town, pd.x, pd.z, pd.w, pd.d, pd.yaw, ground, 'wood:worn|stain:walnut|fin:raw', 0);
+      for (const o of p.orchards) fenceRect(town, o.x, o.z, o.w + 2, o.d + 2, o.yaw, ground, 'wood:weathered|stain:natural|fin:raw', 3);
+      for (const [x, z] of p.wells) well(town, x, z, ground);
+      p.stalls.forEach((st, i) => stall(town, st.x, st.z, st.yaw, st.goods, ground, i + p.site.x));
+      p.haystacks.forEach(([x, z], i) => haystack(town, x, z, ground, 0.8 + (i % 3) * 0.15));
+      for (const [x, z] of p.lamps) lampPost(town, x, z, ground);
+      add(town);
       this.buildTownLod(p);
     }
     for (const b of this.world.bridges) add(buildBridge(b, ground));
@@ -113,7 +132,8 @@ export class Settlements {
       index.set(b.id, i);
       const s = b.spec;
       const H = 0.35 + (s.type === 'chapel' || s.type === 'hall' ? 6 : s.type === 'stable' || s.type === 'barn' || s.type === 'warehouse' ? 4.5 : 3) * s.floors;
-      const wallK = s.style === 'stone' ? 'mat:medieval_blocks_02' : s.style === 'dark' ? 'mat:castle_wall_slates' : s.style === 'rustic' ? 'mat:stacked_stone_wall' : s.style === 'plaster' ? 'mat:white_plaster_rough_01' : 'mat:plastered_wall_02';
+      // same stone/plaster family as the detailed building, darkened a touch for the far view
+      const wallK = s.style === 'stone' ? 'mat:medieval_blocks_02|tint:c8c0b0' : s.style === 'dark' ? 'mat:castle_wall_slates|tint:9a9a9a' : s.style === 'rustic' ? 'mat:stacked_stone_wall|tint:b0a898' : s.style === 'plaster' ? 'mat:white_plaster_rough_01|tint:d8d0c0' : 'mat:plastered_wall_02|tint:d0c4ac';
       const roofK = s.roof === 'thatch' ? 'mat:thatch_roof_angled' : s.roof === 'tile' ? 'mat:clay_roof_tiles_02' : s.roof === 'slate' ? 'mat:roof_slates_02' : 'mat:reed_roof_04';
       const before = new Map([...g.parts].map(([k, v]) => [k, v.pos.length / 3]));
       g.push().translate(b.x, b.y, b.z).rotateY(b.yaw);
@@ -263,7 +283,7 @@ export class Settlements {
         this.phys.owners.set(col.handle, { kind: 'movable', movable: mv as MovableNode, furniture: node, building: b });
       });
       live.furniture.push(node);
-      for (const sp of f.model.sleep ?? []) live.bedOwners.push({ node, sleep: sp.pos.clone().applyEuler(new THREE.Euler(0, f.yaw, 0)).add(f.pos), person: null });
+      for (const sp of f.model.sleep ?? []) live.bedOwners.push({ node, sleep: sp.pos.clone().applyEuler(new THREE.Euler(0, f.yaw, 0)).add(f.pos).applyMatrix4(root.matrixWorld), person: null });
     }
     // assign beds to household members
     const members = b.household?.members ?? [];
@@ -325,7 +345,7 @@ export class Settlements {
         const detailed = d < this.detailR + Math.max(l.model.spec.w, l.model.spec.d);
         if (ext && ext.visible !== detailed) { ext.visible = detailed; this.setLodHidden(l.placed, detailed); }
       }
-      for (const d of l.doors) d.update(dt);
+      for (const d of l.doors) d.update(dt, this.people);
       for (const f of l.furniture) f.update(dt, hours, t);
     }
   }

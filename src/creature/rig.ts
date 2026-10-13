@@ -98,7 +98,7 @@ const FRAG_NORMAL = /* glsl */ `
 export class CreatureLib {
   geos = new Map<string, THREE.BufferGeometry>();
   anatomies = new Map<string, Anatomy>();
-  private eyeGeo = new THREE.SphereGeometry(1, 16, 12);
+  private eyeGeo = new THREE.SphereGeometry(1, 10, 8);
   private eyeMat = new THREE.MeshPhysicalMaterial({ color: 0x0a0605, roughness: 0.05, clearcoat: 1, clearcoatRoughness: 0.02 });
   humanVariants: HumanP[] = [
     { female: false, build: 0, dress: false, beard: true, hairLong: false },

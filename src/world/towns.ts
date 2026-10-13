@@ -21,6 +21,12 @@ export interface TownPlan {
   site: Site; buildings: Placed[]; walls: WallPlan | null; plaza: { x: number; z: number; r: number };
   wells: [number, number][]; stalls: { x: number; z: number; yaw: number; goods: string }[];
   keep: Placed | null; docks: { x: number; z: number; yaw: number; len: number }[]; streets: [number, number][][];
+  /** fenced rectangles: kitchen gardens, paddocks, orchards (x,z centre, w,d, yaw) */
+  gardens: { x: number; z: number; w: number; d: number; yaw: number }[];
+  paddocks: { x: number; z: number; w: number; d: number; yaw: number; species: 'cow' | 'pig' | 'horse' | 'donkey' }[];
+  orchards: { x: number; z: number; w: number; d: number; yaw: number }[];
+  haystacks: [number, number][];
+  lamps: [number, number][];
 }
 
 const FIRST_M = ['Aldric', 'Bran', 'Cedric', 'Dunstan', 'Edmund', 'Falk', 'Godric', 'Harold', 'Ivo', 'Jory', 'Kenric', 'Leofric', 'Merek', 'Nyle', 'Osric', 'Piers', 'Quill', 'Roderick', 'Simon', 'Tobias', 'Ulric', 'Wat', 'Wystan', 'Hugh', 'Gerald', 'Ansel', 'Brom', 'Corin', 'Daveth', 'Emeric'];
@@ -41,7 +47,7 @@ export class Towns {
   private planSite(site: Site): TownPlan {
     const w = this.world;
     const r = mulberry32(site.x * 13 + site.z * 7 + 99);
-    const plan: TownPlan = { site, buildings: [], walls: null, plaza: { x: site.x, z: site.z, r: site.kind === 'capital' ? 22 : 13 }, wells: [], stalls: [], keep: null, docks: [], streets: [] };
+    const plan: TownPlan = { site, buildings: [], walls: null, plaza: { x: site.x, z: site.z, r: site.kind === 'capital' ? 22 : 13 }, wells: [], stalls: [], keep: null, docks: [], streets: [], gardens: [], paddocks: [], orchards: [], haystacks: [], lamps: [] };
     const iron = site.kingdom === 'ironreach';
     const isles = site.kingdom === 'isles';
     const baseY = w.heightAt(site.x, site.z);
@@ -129,7 +135,7 @@ export class Towns {
           // face the street: building local +z points toward the street centreline
           const yaw = Math.atan2(uz * side, -ux * side);
           const p = add(type, x, z, yaw);
-          t += p ? Math.max(p.spec.w, 6) + 1.5 + r() * 3 : 3;
+          t += p ? Math.max(p.spec.w, 5) + 0.6 + r() * (site.kind === 'capital' ? 0.8 : 2.5) : 2;
         }
       }
     };
@@ -155,13 +161,19 @@ export class Towns {
         lineBuildings(ang, plan.plaza.r + 6, R * 0.9, 5, (t) => (t < R * 0.3 ? (r() < 0.45 ? 'shop' : r() < 0.15 ? 'tavern' : 'townhouse') : t > R * 0.8 && r() < 0.25 ? (r() < 0.5 ? 'barracks' : 'stable') : r() < 0.1 ? 'smithy' : r() < 0.6 ? 'townhouse' : 'house'));
       }
       // fill along the ring street
-      for (let i = 0; i < 24; i++) {
+      // a second row of houses behind each radial street
+      for (let i = 0; i < nRad; i++) {
+        const ang = (site.gateYaw ?? 0) + (i / nRad) * Math.PI * 2;
+        lineBuildings(ang, plan.plaza.r + 14, R * 0.86, 16, () => (r() < 0.65 ? 'townhouse' : r() < 0.5 ? 'house' : 'shop'));
+      }
+      for (let i = 0; i < 40; i++) {
         const a = (i / 24) * Math.PI * 2 + 0.13;
         for (const side of [1, -1]) {
           const off = ringR + side * 9;
           const x = site.x + Math.cos(a) * off, z = site.z + Math.sin(a) * off;
           const yaw = Math.atan2(-Math.cos(a) * side, -Math.sin(a) * side);
           add(r() < 0.6 ? 'townhouse' : 'house', x, z, yaw);
+          if (side > 0) plan.lamps.push([site.x + Math.cos(a) * ringR, site.z + Math.sin(a) * ringR]);
         }
       }
       plan.walls = { site: site.id, pts: ringPts(site.x, site.z, R * 0.99, 40), r: R * 0.99, gates, height: 11, style: iron ? 'dark' : 'stone' };
@@ -204,8 +216,71 @@ export class Towns {
       }
       for (let i = 0; i < 4; i++) plan.stalls.push({ x: site.x + Math.cos(axis + i * 1.57 + 0.78) * (plan.plaza.r - 3), z: site.z + Math.sin(axis + i * 1.57 + 0.78) * (plan.plaza.r - 3), yaw: -(axis + i * 1.57 + 0.78) - Math.PI / 2, goods: ['fruit', 'bread', 'cloth', 'meat'][i] });
     }
+    this.enrich(plan, r, add, overlaps, okGround, placed);
     this.populate(plan, r);
     return plan;
+  }
+
+  /** Life around the houses: kitchen gardens, farmsteads with paddocks and haystacks, orchards, lamps. */
+  private enrich(plan: TownPlan, r: () => number, add: (t: BType, x: number, z: number, yaw: number, o?: Partial<BuildingSpec>) => Placed | null,
+    overlaps: (x: number, z: number, hw: number, hd: number, yaw: number) => boolean, okGround: (x: number, z: number, hw: number, hd: number) => boolean,
+    placed: { x: number; z: number; hw: number; hd: number; yaw: number }[]) {
+    const w = this.world, site = plan.site;
+    const rect = (x: number, z: number, wd: number, dd: number, yaw: number, crop: number, fieldAmt = 1) => {
+      // paint soil (and a crop for the grass system) into the terrain control maps
+      w.paintPlot(x, z, wd, dd, yaw, crop, fieldAmt);
+      placed.push({ x, z, hw: wd / 2, hd: dd / 2, yaw });
+    };
+    // kitchen gardens behind homes
+    for (const b of [...plan.buildings]) {
+      if (!['house', 'cottage', 'townhouse'].includes(b.spec.type) || r() < 0.25) continue;
+      const gd = 5 + r() * 6, gw = Math.max(4, b.spec.w * (0.7 + r() * 0.4));
+      const back = b.spec.d / 2 + gd / 2 + 1.2;
+      const x = b.x - Math.sin(b.yaw) * back, z = b.z - Math.cos(b.yaw) * back;
+      if (overlaps(x, z, gw / 2, gd / 2, b.yaw) || !okGround(x, z, gw / 2, gd / 2)) continue;
+      rect(x, z, gw, gd, b.yaw, r() < 0.7 ? 3 : 1);
+      plan.gardens.push({ x, z, w: gw, d: gd, yaw: b.yaw });
+    }
+    if (site.kind === 'castle') return;
+    // farmsteads ringing the town: farmhouse, barn, paddock with livestock, haystacks, an orchard
+    const n = site.kind === 'capital' ? 8 : site.kind === 'port' ? 3 : 5;
+    for (let k = 0, tries = 0; k < n && tries < 80; tries++) {
+      const a = r() * Math.PI * 2, d = site.r * (site.kind === 'capital' ? 1.15 : 1.05) + 40 + r() * 140;
+      const fx = site.x + Math.cos(a) * d, fz = site.z + Math.sin(a) * d;
+      const yaw = Math.atan2(site.x - fx, site.z - fz); // farmhouse faces the town
+      if (w.roadAt(fx, fz) > 0.2 || w.fieldAt(fx, fz) > 0.2) continue;
+      const house = add('cottage', fx, fz, yaw, { style: site.kingdom === 'ironreach' ? 'stone' : r() < 0.5 ? 'timber' : 'plaster', roof: site.kingdom === 'ironreach' ? 'slate' : 'thatch' } as Partial<BuildingSpec>);
+      if (!house) continue;
+      k++;
+      const side = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
+      const bx = fx + side.x * 13, bz = fz + side.z * 13;
+      add('barn', bx, bz, yaw + Math.PI / 2, { style: 'rustic' } as Partial<BuildingSpec>);
+      // paddock behind
+      const back = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
+      const pw = 18 + r() * 10, pd = 12 + r() * 8;
+      const px = fx + back.x * (pd / 2 + 8) + side.x * 4, pz = fz + back.z * (pd / 2 + 8) + side.z * 4;
+      if (!overlaps(px, pz, pw / 2, pd / 2, yaw) && okGround(px, pz, pw / 2, pd / 2)) {
+        const sp = (site.kingdom === 'ironreach' ? ['pig', 'horse', 'donkey', 'pig'] : ['cow', 'cow', 'pig', 'horse', 'donkey'])[Math.floor(r() * (site.kingdom === 'ironreach' ? 4 : 5))] as TownPlan['paddocks'][number]['species'];
+        rect(px, pz, pw, pd, yaw, 0, 0.35);
+        plan.paddocks.push({ x: px, z: pz, w: pw, d: pd, yaw, species: sp });
+      }
+      for (let h = 0; h < 2 + Math.floor(r() * 3); h++) plan.haystacks.push([bx + back.x * (6 + h * 2.5) + (r() - 0.5) * 3, bz + back.z * (6 + h * 2.5) + (r() - 0.5) * 3]);
+      // orchard on the other side
+      if (r() < 0.6) {
+        const ow = 26 + r() * 20, od = 20 + r() * 14;
+        const ox = fx - side.x * (ow / 2 + 8), oz = fz - side.z * (ow / 2 + 8);
+        if (!overlaps(ox, oz, ow / 2, od / 2, yaw) && okGround(ox, oz, ow / 2, od / 2)) { rect(ox, oz, ow, od, yaw, 0, 0); plan.orchards.push({ x: ox, z: oz, w: ow, d: od, yaw }); }
+      }
+      const fy = w.heightAt(fx, fz);
+      w.paveLine(fx, fz, site.x, site.z, 2.5, 0.45);
+      void fy;
+    }
+    // torches along the main streets
+    for (const st of plan.streets) {
+      const [[x0, z0], [x1, z1]] = st;
+      const len = Math.hypot(x1 - x0, z1 - z0);
+      for (let t = 18; t < len; t += 26) plan.lamps.push([x0 + (x1 - x0) * t / len + (z1 - z0) / len * 4, z0 + (z1 - z0) * t / len - (x1 - x0) / len * 4]);
+    }
   }
 
   /** Households for every dwelling; workers for workplaces. */

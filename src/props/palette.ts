@@ -83,6 +83,7 @@ export function material(key: string): THREE.Material {
     default: m = new THREE.MeshStandardMaterial({ color: 0xff00ff });
   }
   m!.name = key;
+  if (opts.wx) weathering(m as THREE.MeshStandardMaterial, +opts.wx);
   // interior surfaces: the sky light (IBL) mostly doesn't reach inside rooms
   if (opts.in) (m as THREE.MeshStandardMaterial).envMapIntensity = 0.22;
   prep?.(m!);
@@ -102,4 +103,44 @@ export function meshesFrom(geos: Map<string, THREE.BufferGeometry>, cast = true,
     out.push(mesh);
   }
   return out;
+}
+
+const WX_FRAG = /* glsl */ `
+float wxHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+float wxNoise(vec3 p) {
+  vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(wxHash(i), wxHash(i + vec3(1,0,0)), f.x), mix(wxHash(i + vec3(0,1,0)), wxHash(i + vec3(1,1,0)), f.x), f.y),
+             mix(mix(wxHash(i + vec3(0,0,1)), wxHash(i + vec3(1,0,1)), f.x), mix(wxHash(i + vec3(0,1,1)), wxHash(i + vec3(1,1,1)), f.x), f.y), f.z);
+}
+float wxFbm(vec3 p) { return wxNoise(p) * 0.55 + wxNoise(p * 2.1) * 0.3 + wxNoise(p * 4.3) * 0.15; }
+`;
+/** Weathering: patchy stone tone, rain streaks running down, moss in damp patches, soot. */
+function weathering(m: THREE.MeshStandardMaterial, amount: number) {
+  const prev = m.onBeforeCompile;
+  m.onBeforeCompile = (sh, r) => {
+    prev.call(m, sh, r);
+    sh.uniforms.uWx = { value: amount };
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vWxPos; varying vec3 vWxN;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWxPos = (modelMatrix * vec4(transformed, 1.0)).xyz; vWxN = normalize(mat3(modelMatrix) * objectNormal);');
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vWxPos; varying vec3 vWxN; uniform float uWx;' + WX_FRAG)
+      .replace('#include <map_fragment>', `#include <map_fragment>
+        {
+          vec3 wp = vWxPos;
+          float tone = wxFbm(wp * 0.11);
+          vec3 tint = mix(vec3(0.82, 0.8, 0.76), vec3(1.1, 1.06, 0.98), tone);
+          tint *= mix(vec3(1.0), vec3(1.04, 1.0, 0.92), smoothstep(0.55, 0.8, wxNoise(wp * 0.035 + 7.0)));
+          // streaks: stretched noise running down the wall
+          float streak = wxNoise(vec3(wp.x * 1.7 + wp.z * 1.7, wp.y * 0.12, wp.z * 1.7 - wp.x * 0.3));
+          tint *= 1.0 - smoothstep(0.55, 0.85, streak) * 0.3 * uWx;
+          // damp moss and lichen low down and on ledges
+          float up = clamp(vWxN.y, 0.0, 1.0);
+          float moss = smoothstep(0.66, 0.84, wxFbm(wp * 0.45 + 3.0)) * (0.2 + up * 0.8) * uWx;
+          vec3 mossCol = diffuseColor.rgb * mix(vec3(0.55, 0.68, 0.38), vec3(0.7, 0.78, 0.5), wxNoise(wp * 3.0));
+          diffuseColor.rgb = mix(diffuseColor.rgb * tint, mossCol, moss * 0.6);
+          // fine pitting
+          diffuseColor.rgb *= 0.92 + 0.16 * wxNoise(wp * 6.0);
+        }`);
+  };
+  const key = m.customProgramCacheKey?.bind(m);
+  m.customProgramCacheKey = () => (key ? key() : '') + '|wx';
 }

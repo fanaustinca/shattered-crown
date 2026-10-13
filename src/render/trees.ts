@@ -117,6 +117,7 @@ export class Trees {
   leafMats = new Map<Species, THREE.Material>();
   impMat!: THREE.ShaderMaterial;
   near0 = 110;
+  orchards: { x: number; z: number; w: number; d: number; yaw: number }[] = [];
 
   constructor(private world: World, private q: Quality, private lighting: Lighting, private renderer: THREE.WebGLRenderer) {}
 
@@ -207,6 +208,14 @@ export class Trees {
       const v = Math.floor(rnd() * VARIANTS);
       const scale = sp === 'bush' ? 0.7 + rnd() * 0.8 : 0.75 + rnd() * 0.5;
       out.push(x, h, z, rnd() * Math.PI * 2, scale, this.typeIndex(sp, v));
+    }
+    // orchards: neat rows of small, round fruit trees
+    for (const o of this.orchards) {
+      const c = Math.cos(o.yaw), sn = Math.sin(o.yaw);
+      for (let u = -o.w / 2 + 2.5; u < o.w / 2 - 1; u += 5) for (let v = -o.d / 2 + 2.5; v < o.d / 2 - 1; v += 5) {
+        const x = o.x + u * c + v * sn + (rnd() - 0.5) * 0.6, z = o.z - u * sn + v * c + (rnd() - 0.5) * 0.6;
+        out.push(x, w.heightAt(x, z), z, rnd() * Math.PI * 2, 0.42 + rnd() * 0.12, this.typeIndex(rnd() < 0.5 ? 'oak' : 'beech', Math.floor(rnd() * VARIANTS)));
+      }
     }
     this.data = new Float32Array(out);
     this.count = out.length / 6;

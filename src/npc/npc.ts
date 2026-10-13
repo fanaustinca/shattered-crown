@@ -10,6 +10,7 @@ import type { Rig } from '../creature/rig';
 import { BipedAnimator, type MoveState } from '../creature/anim';
 import { SKIN_TONES, HAIR_COLORS } from '../creature/rig';
 import type { LiveBuilding } from '../build/settlements';
+import { navPath } from '../build/building';
 import type { FurnitureNode } from '../props/furnish';
 import type { Action } from '../player/interact';
 import type { Limb } from '../player/player';
@@ -190,7 +191,7 @@ export class NPC {
       if (this.path.length) {
         goal = this.path[0];
         const d = Math.hypot(goal.x - st.pos.x, goal.z - st.pos.z);
-        if (d < 0.45) { this.path.shift(); goal = this.path[0] ?? null; }
+        if (d < (this.path.length === 1 ? 0.7 : 0.45)) { this.path.shift(); goal = this.path[0] ?? null; }
         speed = this.activity === 'shelter' ? 3.2 : 1.35;
       } else if (this.waitT > 0) this.waitT -= dt;
       st.action = this.activity === 'sleep' ? 'sleep' : 'idle';
@@ -211,7 +212,7 @@ export class NPC {
     const t = this.collider.translation();
     this.vy -= 9.81 * dt;
     const desired = { x: Math.sin(st.yaw) * st.speed * dt, y: this.vy * dt, z: Math.cos(st.yaw) * st.speed * dt };
-    this.kcc.computeColliderMovement(this.collider, desired, RAPIER.QueryFilterFlags.EXCLUDE_SENSORS, groups(G_CHAR, ALL & ~G_SENSOR & ~G_HELD));
+    this.kcc.computeColliderMovement(this.collider, desired, RAPIER.QueryFilterFlags.EXCLUDE_SENSORS, groups(G_CHAR, ALL & ~G_SENSOR & ~G_HELD), (c) => { const o = g.physics.owners.get(c.handle); return !o || (o.kind !== 'npc' && o.kind !== 'soldier' && o.kind !== 'prop'); });
     const mv = this.kcc.computedMovement();
     if (this.kcc.computedGrounded()) this.vy = 0;
     const nt = { x: t.x + mv.x, y: t.y + mv.y, z: t.z + mv.z };
@@ -221,7 +222,29 @@ export class NPC {
     st.pos.set(nt.x, nt.y - 0.55 * this.anim.heightScale - 0.28, nt.z);
     const moved = Math.hypot(mv.x, mv.z) / dt;
     // stuck: nudge sideways, then give up on the waypoint
-    if (st.speed > 0.6 && moved < 0.1) { this.waitT += dt; if (this.waitT > 1.5) { st.yaw += 1.2; this.waitT = 0; if (this.path.length > 1) this.path.shift(); } }
+    this.chkT += dt;
+    if (this.chkT > 3) { this.chkT = 0; const prog = this.chkPos.distanceTo(st.pos); this.chkPos.copy(st.pos); this.noProgress = this.path.length > 0 && !this.hostile && prog < 0.8; }
+    if (this.noProgress || (this.path.length && !this.hostile && moved < 0.15)) {
+      this.waitT += dt; this.stuckT += dt;
+      if (this.waitT > 1.2) { st.yaw += (Math.random() < 0.5 ? 1 : -1) * 1.1; this.waitT = 0; }
+      if (this.noProgress) this.stuckT = Math.max(this.stuckT, 3.1);
+      if (this.stuckT > 3 && this.path.length) {
+        this.noProgress = false;
+        // out of the player's sight we can quietly step past the obstruction; in sight, re-plan
+        const toP = g.player.pos.clone().sub(st.pos);
+        const camF = new THREE.Vector3(0, 0, -1).applyQuaternion(g.camera.quaternion);
+        const seen = toP.length() < 22 && camF.dot(st.pos.clone().sub(g.camera.position).normalize()) > 0.3;
+        if (!seen || this.stuckT > 6) {
+          const nx = this.path.shift()!;
+          const y = g.groundAt(nx.x, nx.z, nx.y + 1);
+          this.body.setTranslation({ x: nx.x, y: y + 0.55 * this.anim.heightScale + 0.3, z: nx.z }, true);
+          this.body.setNextKinematicTranslation({ x: nx.x, y: y + 0.55 * this.anim.heightScale + 0.3, z: nx.z });
+          g.physics.world.propagateModifiedBodyPositionsToColliders();
+          st.pos.set(nx.x, y, nx.z);
+        }
+        if (!seen || this.stuckT > 6) this.stuckT = 0;
+      }
+    } else if (moved > 0.4) { this.stuckN = 0; this.stuckT = 0; }
     st.vel.set(mv.x / dt, 0, mv.z / dt);
   }
   animate(dt: number) {
@@ -231,6 +254,11 @@ export class NPC {
   }
   sleepPose: { pos: THREE.Vector3; yaw: number } | null = null;
   fightTarget: NPC | null = null;
+  stuckN = 0;
+  stuckT = 0;
+  chkT = 0;
+  chkPos = new THREE.Vector3(1e9, 0, 0);
+  noProgress = false;
   holdAt: THREE.Vector3 | null = null;
 }
 
@@ -242,6 +270,7 @@ export class Residents {
   people: Abstract[] = [];
   live: NPC[] = [];
   private lastActivityCheck = -1;
+  cap = 90;
   constructor(public game: Game) {
     const towns = game.towns;
     for (const p of towns.people) {
@@ -276,10 +305,15 @@ export class Residents {
     const tick = Math.floor(hours * 4);
     const check = tick !== this.lastActivityCheck;
     this.lastActivityCheck = tick;
+    // only the nearest few dozen are fully simulated; the rest stay on the cheap schedule queue
+    const cap = this.cap;
+    const dist = (a: Abstract) => { const q = a.live ? a.live.st.pos : a.where; return Math.hypot(q.x - p.x, q.z - p.z); };
+    const near = this.people.filter((a) => a.activity !== 'dead' && dist(a) < radius).sort((a, b) => dist(a) - dist(b));
+    const keep = new Set(near.slice(0, cap));
     for (const a of this.people) {
       if (a.activity === 'dead') continue;
       const act = this.scheduled(a, hours, raining);
-      const d = Math.hypot(a.where.x - p.x, a.where.z - p.z);
+      const d = keep.has(a) ? dist(a) : 1e9;
       if (!a.live && d < radius) {
         // spawn at the logical location: inside the building they should be in
         const b = act === 'work' && a.work ? a.work : act === 'tavern' ? this.nearestTavern(a.home) : a.home;
@@ -292,7 +326,7 @@ export class Residents {
         a.activity = 'home';
         this.live.push(a.live);
         this.plan(a, act);
-      } else if (a.live && d > radius + 30) {
+      } else if (a.live && (d > radius + 30 || (d === 1e9 && !a.live.hostile && dist(a) > 25))) {
         a.where.copy(a.live.st.pos);
         a.live.dispose();
         this.live.splice(this.live.indexOf(a.live), 1);
@@ -310,22 +344,28 @@ export class Residents {
   frontOf(b: Placed) { return new THREE.Vector3(b.x + Math.sin(b.yaw) * (b.spec.d / 2 + 1.6), b.y, b.z + Math.cos(b.yaw) * (b.spec.d / 2 + 1.6)); }
   private toWorld(b: Placed, lx: number, ly: number, lz: number) { const c = Math.cos(b.yaw), s = Math.sin(b.yaw); return new THREE.Vector3(b.x + lx * c + lz * s, b.y + ly, b.z - lx * s + lz * c); }
   private indoorSpot(l: LiveBuilding, person: Person) {
-    const rm = l.model.rooms[Math.floor(mulberry32(person.cloth1)() * l.model.rooms.length)] ?? l.model.rooms[0];
-    const r = mulberry32(person.cloth2 + 3);
-    return this.toWorld(l.placed, rm.min.x + 0.6 + r() * Math.max(0.1, rm.max.x - rm.min.x - 1.2), rm.y, rm.min.y + 0.6 + r() * Math.max(0.1, rm.max.y - rm.min.y - 1.2));
-  }
-  /** Interior route from the front door to a point on some floor (via the stairs). */
-  private interiorRoute(b: Placed, target: THREE.Vector3, floor: number) {
-    const m = this.game.settlements.model(b);
-    const pts: THREE.Vector3[] = [];
-    pts.push(this.toWorld(b, 0, m.floorY[0], b.spec.d / 2 - 0.8));
-    if (floor > 0 && m.stairs[floor - 1]) {
-      const s = m.stairs[floor - 1];
-      pts.push(this.toWorld(b, s.from.x, s.from.y, s.from.z));
-      pts.push(this.toWorld(b, s.to.x, s.to.y, s.to.z));
+    // doorway approaches and stair landings are always kept clear of furniture
+    const m = l.model;
+    const spots: THREE.Vector3[] = [];
+    for (const d of m.doors) {
+      const n = Math.abs(Math.sin(d.yaw)) > 0.5 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 0, 1);
+      if (d.exterior) spots.push(d.pos.clone().setZ(d.pos.z - 1.0));
+      else spots.push(d.pos.clone().addScaledVector(n, 0.8), d.pos.clone().addScaledVector(n, -0.8));
     }
-    pts.push(target);
-    return pts;
+    for (const st of m.stairs) spots.push(st.from.clone(), st.to.clone());
+    const r0 = mulberry32(person.cloth1 + person.name.length * 7); r0();
+    const p = spots[Math.floor(r0() * spots.length)] ?? new THREE.Vector3((r0() - 0.5) * 2, m.floorY[0], m.spec.d / 2 - 1.2);
+    return this.toWorld(l.placed, p.x, p.y, p.z);
+  }
+  /** Interior route from outside the front door to a local point (doors, partitions, stairs). */
+  private interiorRoute(b: Placed, targetWorld: THREE.Vector3) {
+    const m = this.game.settlements.model(b);
+    const local = this.toLocal(b, targetWorld);
+    return navPath(m, 'outside', local).map((p) => this.toWorld(b, p.x, p.y, p.z));
+  }
+  private toLocal(b: Placed, w: THREE.Vector3) {
+    const dx = w.x - b.x, dz = w.z - b.z, c = Math.cos(b.yaw), s = Math.sin(b.yaw);
+    return new THREE.Vector3(dx * c - dz * s, w.y - b.y, dx * s + dz * c);
   }
   /** Build a path for a new activity. */
   plan(a: Abstract, act: Activity) {
@@ -337,11 +377,8 @@ export class Residents {
     const curB = g.settlements.inside(here);
     // leave the current building through its door
     if (curB) {
-      const m = curB.model, b = curB.placed;
-      const lp = curB.root.worldToLocal(here.clone());
-      const floor = m.floorY.reduce((f, y, i) => (lp.y > y - 0.5 ? i : f), 0);
-      if (floor > 0 && m.stairs[floor - 1]) { const s = m.stairs[floor - 1]; route.push(this.toWorld(b, s.to.x, s.to.y, s.to.z), this.toWorld(b, s.from.x, s.from.y, s.from.z)); }
-      route.push(this.toWorld(b, 0, m.floorY[0], b.spec.d / 2 - 0.8), this.frontOf(b));
+      const b = curB.placed;
+      route.push(...navPath(curB.model, this.toLocal(b, here), 'outside').map((p) => this.toWorld(b, p.x, p.y, p.z)), this.frontOf(b));
     }
     const plan = g.towns.plans.find((pl) => pl.site.id === a.home.site)!;
     const goInto = (b: Placed, kind: 'bed' | 'room') => {
@@ -350,11 +387,11 @@ export class Residents {
       const live = g.settlements.live.get(b.id);
       if (live && kind === 'bed') {
         const bed = live.bedOwners.find((x) => x.person === a.person.id) ?? live.bedOwners[0];
-        if (bed) { const lp = live.root.worldToLocal(bed.sleep.clone()); const floor = live.model.floorY.reduce((f, y, i) => (lp.y > y - 0.5 ? i : f), 0); route.push(...this.interiorRoute(b, bed.sleep.clone(), floor)); return; }
+        if (bed) { route.push(...this.interiorRoute(b, bed.sleep.clone().setY(bed.sleep.y - 0.4))); return; }
       }
       const m = g.settlements.model(b);
       const rm = m.rooms.find((x) => x.floor === 0) ?? m.rooms[0];
-      route.push(...this.interiorRoute(b, this.toWorld(b, (rm.min.x + rm.max.x) / 2 + (Math.random() - 0.5) * 1.5, rm.y, (rm.min.y + rm.max.y) / 2 + (Math.random() - 0.5) * 1.5), 0));
+      route.push(...this.interiorRoute(b, this.toWorld(b, (rm.min.x + rm.max.x) / 2 + (Math.random() - 0.5) * 1.5, rm.y, (rm.min.y + rm.max.y) / 2 + (Math.random() - 0.5) * 1.5)));
     };
     if (act === 'sleep') goInto(a.home, 'bed');
     else if (act === 'home' || act === 'shelter') goInto(curB && act === 'shelter' ? curB.placed : a.home, 'room');
@@ -379,7 +416,7 @@ export class Residents {
         if (dp.distanceTo(pos) < 1.6 && d.target < 0.5 && goal.distanceTo(dp) < goal.distanceTo(pos) + 1) {
           if (d.locked) d.locked = false; // residents have keys
           d.toggle();
-          setTimeout(() => { if (d.target > 0.5) d.toggle(); }, 3500);
+          d.autoClose = 4;
         }
       }
     }

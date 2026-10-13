@@ -281,8 +281,13 @@ export class Fauna {
   live = new Map<HerdDef, Animal[]>();
   liveFlocks = new Map<FlockDef, Flock>();
   extra: Animal[] = [];   // animals the player took away (ridden/led horses persist)
-  constructor(public ctx: GameCtx) {
+  constructor(public ctx: GameCtx, towns?: { plans: { site: { id: string }; paddocks: { x: number; z: number; w: number; d: number; species: Species }[]; buildings: { spec: { type: string }; x: number; z: number }[] }[] }) {
     const r = mulberry32(31337);
+    // livestock in the farm paddocks, hens around every farmhouse
+    for (const p of towns?.plans ?? []) {
+      for (const pd of p.paddocks) this.herds.push({ species: pd.species, x: pd.x, z: pd.z, r: Math.min(pd.w, pd.d) * 0.7, n: pd.species === 'horse' || pd.species === 'donkey' ? 2 + Math.floor(r() * 2) : 3 + Math.floor(r() * 4), seed: Math.floor(r() * 1e9), owner: p.site.id });
+      for (const b of p.buildings) if (b.spec.type === 'cottage' && r() < 0.6) this.flockDefs.push({ species: 'chicken', x: b.x + (r() - 0.5) * 10, z: b.z + (r() - 0.5) * 10, n: 3 + Math.floor(r() * 5), seed: Math.floor(r() * 1e9) });
+    }
     const w = ctx.world;
     for (const s of SITES) {
       const farms = w.fields.filter((f) => f.site === s.id).slice(0, 6);

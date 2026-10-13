@@ -81,6 +81,24 @@ export function installDebugApi(game: Game) {
       game.camera.updateMatrixWorld();
       return { size: box.getSize(new THREE.Vector3()).toArray() };
     },
+    /** Simulate residents around a town and report who is stuck. */
+    npcTest(siteId: string, hours: number, seconds: number) {
+      const plan = game.towns.plans.find((p) => p.site.id === siteId)!;
+      game.player.spawn(plan.plaza.x + 3, plan.plaza.z + 3);
+      api.stream(plan.plaza.x, plan.plaza.z);
+      game.hours = hours;
+      const dt = 1 / 30;
+      for (let t = 0; t < 2; t += dt) game.step(dt);
+      const start = new Map(game.residents.live.map((n) => [n, n.st.pos.clone()]));
+      const moved = new Map<unknown, number>();
+      for (let t = 0; t < seconds; t += dt) { game.step(dt); for (const n of game.residents.live) moved.set(n, Math.max(moved.get(n) ?? 0, n.st.pos.distanceTo(start.get(n) ?? n.st.pos))); }
+      const live = game.residents.live;
+      const withPath = live.filter((n) => n.path.length > 0);
+      const inside = live.filter((n) => game.settlements.inside(n.st.pos));
+      const stuck = withPath.filter((n) => (moved.get(n) ?? 0) < 1.5);
+      return { live: live.length, withPath: withPath.length, inside: inside.length, stuck: stuck.length,
+        stuckInfo: stuck.slice(0, 8).map((n) => ({ block: (() => { const a = n.st.pos.clone().setY(n.st.pos.y + 0.9); const b = (n.path[0] ?? a).clone().setY(a.y); const d = b.clone().sub(a); const len = d.length(); if (len < 0.01) return 'none'; const h = game.physics.ray(a, d.normalize(), len, undefined, n.collider); return h ? (h.owner?.kind ?? '?') + '@' + h.toi.toFixed(2) + '' : 'clear'; })(), plen: n.path.length, who: n.name + ' ' + n.activity, at: n.st.pos.toArray().map((v) => +v.toFixed(1)), next: n.path[0]?.toArray().map((v) => +v.toFixed(1)), inB: game.settlements.inside(n.st.pos)?.placed.spec.type ?? null })) };
+    },
     /** Synchronously stream in all buildings near (x,z). */
     stream(x: number, z: number) { const v = new THREE.Vector3(x, 0, z); game.settlements.update(v, 0); while (game.settlements.queue.length) game.settlements.update(v, 50); return game.settlements.live.size; },
     site(id: string) { return game.towns.plans.find((p) => p.site.id === id); },
