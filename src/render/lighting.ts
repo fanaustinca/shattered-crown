@@ -19,6 +19,10 @@ export class Lighting {
   exposure = 1;
   /** eye adaptation rate per frame (tests set 1 for instant) */
   adapt = 0.03;
+  /** camera is inside a building: the eye opens up */
+  interior = false;
+  /** lightning flash intensity */
+  flash = 0;
   private tmp = new THREE.Color();
 
   constructor(private scene: THREE.Scene, camera: THREE.PerspectiveCamera, q: Quality) {
@@ -79,7 +83,7 @@ export class Lighting {
     if (sunUp <= 0.001) sharedUniforms.uSunColor.value.setRGB(0.02, 0.025, 0.04);
     // IBL brightness and auto exposure (the eye adapts to night)
     this.scene.environmentIntensity = 0.55 + 0.45 * this.dayFactor;
-    const target = THREE.MathUtils.lerp(5.5, 1.0, this.dayFactor) * (1 + overcast * 0.35);
+    const target = THREE.MathUtils.lerp(5.5, 1.0, this.dayFactor) * (1 + overcast * 0.35) * (this.interior ? THREE.MathUtils.lerp(1.3, 2.6, this.dayFactor) : 1);
     this.exposure += (target - this.exposure) * this.adapt;
   }
 

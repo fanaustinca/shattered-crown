@@ -151,6 +151,8 @@ export class Player {
   step(dt: number) {
     if (this.mode === 'dead') return;
     if (this.mode === 'seat' && this.seat) {
+      this.seat.drive?.(this.input, dt, this);
+      if (!this.seat) return;
       this.seat.getTransform(this.pos, this.tmpQ);
       this.body.setNextKinematicTranslation({ x: this.pos.x, y: this.pos.y + HALF + RADIUS, z: this.pos.z });
       this.body.setTranslation({ x: this.pos.x, y: this.pos.y + HALF + RADIUS, z: this.pos.z }, false);

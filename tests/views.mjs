@@ -28,3 +28,14 @@ VIEWS.push(
   { name: 'gallery-animals', time: 11, setup: (SC) => { SC.gallery(-900, 300, ['horse', 'donkey', 'cow', 'pig', 'bunny', 'chicken', 'crow', 'pigeon', 'sparrow']); }, cam: [-893, 'g+1.6', 305.5, -893, 'g+0.8', 300] },
   { name: 'gallery-humans', time: 11, setup: (SC) => { SC.gallery(-920, 320, ['human0', 'human1', 'human2', 'human3', 'human4', 'human5']); }, cam: [-917.3, 'g+1.5', 323.2, -917.3, 'g+1.1', 320] },
 );
+VIEWS.push(
+  { name: 'herd', time: 10, setup: async (SC) => { const h = SC.game.fauna.herds.find((h) => h.species === 'horse' && h.owner === 'aurelhold'); SC.teleport(h.x + 12, h.z + 12); SC.hold([], 6); SC.game.freeCam = true; window.__h = h; }, frames: 2, cam: null },
+);
+VIEWS.push(
+  { name: 'town-millbrook', time: 10, setup: (SC) => { const s = SC.site('millbrook').site; SC.stream(s.x, s.z); SC.view(s.x - 40, 'g+14', s.z + 30, s.x, 'g+2', s.z); } },
+  { name: 'town-aurelhold', time: 15, setup: (SC) => { const s = SC.site('aurelhold').site; SC.stream(s.x, s.z); SC.view(s.x + 60, 'g+25', s.z + 50, s.x, 'g+3', s.z); } },
+  { name: 'castle-whitecrest', time: 9, setup: (SC) => { const s = SC.site('whitecrest').site; SC.stream(s.x, s.z); SC.view(s.x - 150, 'g+40', s.z + 120, s.x, 'g+8', s.z); } },
+  { name: 'town-ironspire', time: 12, setup: (SC) => { const s = SC.site('ironspire').site; SC.stream(s.x, s.z); SC.view(s.x - 80, 'g+30', s.z + 80, s.x, 'g+3', s.z); } },
+  { name: 'interior-1', time: 11, setup: (SC) => { window.__int = SC.interior('millbrook', 0, 0); } },
+  { name: 'interior-2', time: 21, setup: (SC) => { window.__int = SC.interior('aurelhold', 3, 1); } },
+);

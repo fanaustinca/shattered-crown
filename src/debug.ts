@@ -37,8 +37,90 @@ export function installDebugApi(game: Game) {
       return { out, exposure: game.lighting.exposure, sun: game.lighting.sunColor.toArray(), envI: game.scene.environmentIntensity };
     },
     height(x: number, z: number) { return game.world.heightAt(x, z); },
+    /** Count visible meshes per top-level group (perf QA). */
+    census() {
+      const out: Record<string, number> = {};
+      game.scene.traverseVisible((o) => {
+        if (!(o as THREE.Mesh).isMesh) return;
+        let p: THREE.Object3D | null = o, k = 'other';
+        while (p) { if (['exterior', 'interior'].includes(p.name)) { k = p.name; break; } if (p.userData?.prop) { k = 'prop'; break; } if (p.userData?.furniture) { k = 'furnNode'; } if (p.userData?.door) { k = 'door'; break; } p = p.parent; }
+        out[k] = (out[k] ?? 0) + 1;
+      });
+      return out;
+    },
     /** Hand control back to the player camera. */
     play() { game.freeCam = false; },
+    /** Studio: one creature on flat ground, driven at a speed/action for t seconds; camera at a given angle. */
+    studio(id: string, speed: number, action: string, t: number, camAng: number, camDist: number, camH = 0.5, coatSeed = 0.3) {
+      const g = game as any;
+      if (g.__studio) { game.scene.remove(g.__studio.rig.root); }
+      for (const m of game.grass.meshes) m.visible = false;
+      const x0 = -1250, z0 = 330;
+      const sp = id.startsWith('human') ? 'human' : id;
+      const coat = sp === 'human' ? { coat: 0, cloth1: 0x7a3020, cloth2: 0x4a4436, boots: 0x3a2a1a, skin: 0xd8a888, hair: 0x4a2a14, belt: 0x2a1a0a } : (window as any).__coatFor(sp, () => coatSeed);
+      const rig = game.creatures.instance(id, coat);
+      game.scene.add(rig.root);
+      const A = (window as any).__anim;
+      const ground = (x: number, z: number) => game.world.heightAt(x, z);
+      const anim = sp === 'human' ? new A.BipedAnimator(rig, ground) : ['sparrow', 'crow', 'pigeon', 'chicken'].includes(sp) ? new A.BirdAnimator(rig) : new A.QuadAnimator(rig, ground);
+      g.__studio = { rig, anim };
+      const st = { pos: new THREE.Vector3(x0, ground(x0, z0), z0), yaw: Math.PI / 2, speed, turn: 0, vel: new THREE.Vector3(), action, look: null };
+      const dt = 1 / 60;
+      for (let k = 0; k < t / dt; k++) {
+        st.pos.x += Math.sin(st.yaw) * speed * dt; st.pos.z += Math.cos(st.yaw) * speed * dt; st.pos.y = ground(st.pos.x, st.pos.z);
+        if (anim instanceof A.BirdAnimator) anim.update(dt, st.pos.clone().setY(st.pos.y + (speed > 0 ? 1.5 : 0)), st.yaw, 0, speed > 0, 8, action === 'graze');
+        else anim.update(dt, st);
+      }
+      rig.root.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(rig.mesh, true);
+      const c = box.getCenter(new THREE.Vector3()), size = box.getSize(new THREE.Vector3()).length();
+      const d = size * camDist;
+      game.freeCam = true;
+      game.camera.position.set(c.x + Math.sin(camAng) * d, c.y + size * camH * 0.3, c.z + Math.cos(camAng) * d);
+      game.camera.lookAt(c);
+      game.camera.updateMatrixWorld();
+      return { size: box.getSize(new THREE.Vector3()).toArray() };
+    },
+    /** Synchronously stream in all buildings near (x,z). */
+    stream(x: number, z: number) { const v = new THREE.Vector3(x, 0, z); game.settlements.update(v, 0); while (game.settlements.queue.length) game.settlements.update(v, 50); return game.settlements.live.size; },
+    site(id: string) { return game.towns.plans.find((p) => p.site.id === id); },
+    /** View from inside a building of a town: camera in the ground-floor room looking at the back wall. */
+    interior(siteId: string, idx = 0, floor = 0) {
+      const plan = game.towns.plans.find((p) => p.site.id === siteId)!;
+      const homes = plan.buildings.filter((b) => b.household && b.spec.floors > floor);
+      const b = homes[idx % homes.length];
+      api.stream(b.x, b.z);
+      const live = game.settlements.live.get(b.id)!;
+      const rm = live.model.rooms.find((r) => r.floor === floor)!;
+      const c = new THREE.Vector3((rm.min.x + rm.max.x) / 2, rm.y + 1.65, rm.max.y - 0.4).applyMatrix4(live.root.matrixWorld);
+      const t = new THREE.Vector3((rm.min.x + rm.max.x) / 2, rm.y + 0.9, rm.min.y).applyMatrix4(live.root.matrixWorld);
+      game.freeCam = true;
+      game.camera.position.copy(c); game.camera.lookAt(t); game.camera.updateMatrixWorld();
+      return { type: b.spec.type, room: rm.kind, w: b.spec.w, d: b.spec.d, family: b.household?.family, members: b.household?.members.map((m) => m.name + ' (' + m.role + ')') };
+    },
+    /** Lay out furniture variants of a category in a grid on open ground (QA). */
+    showroom(cat: string, n = 12, x0 = -1250, z0 = 330, perRow = 6, spacing = 2.6) {
+      const F = (window as any).__furn;
+      const g = game as any;
+      if (g.__show) game.scene.remove(g.__show);
+      for (const m of game.grass.meshes) m.visible = false;
+      const grp = new THREE.Group(); g.__show = grp;
+      const designs = Object.keys(F.CATALOG[cat]);
+      for (let i = 0; i < n; i++) {
+        const design = designs[i % designs.length];
+        const mods = F.modsFor(i * 7919 + cat.length);
+        const model = F.makeFurniture(cat, design, mods);
+        const node = new F.FurnitureNode(model, (i % 4) * 0.25);
+        const x = x0 + (i % perRow) * spacing, z = z0 + Math.floor(i / perRow) * spacing;
+        node.group.position.set(x, game.world.heightAt(x, z), z);
+        // open a few drawers/doors so the working parts show
+        node.movables.forEach((mv: any, k: number) => { if ((k + i) % 2 === 0) { mv.target = 1; mv.open = 1; } });
+        node.update(0, 0, 0);
+        grp.add(node.group);
+      }
+      game.scene.add(grp);
+      return { designs: designs.length, catalog: F.enumerateCatalog().length, designCount: F.DESIGN_COUNT };
+    },
     /** Line up every species in bind pose at (x,z) for visual QA. */
     gallery(x: number, z: number, ids?: string[]) {
       const list = ids ?? [...game.creatures.anatomies.keys()];

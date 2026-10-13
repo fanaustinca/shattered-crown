@@ -96,6 +96,16 @@ export class World {
       this.forest[q] = 0;
     });
   }
+  /** Mark a building footprint as built-over (paving channel, no grass, no trees). */
+  paveRect(x: number, z: number, w: number, d: number, yaw: number) {
+    const c = Math.cos(yaw), sn = Math.sin(yaw), R = Math.hypot(w, d) / 2 + 1;
+    this.paint(x, z, R, (q) => {
+      const i = q % HM_N, j = Math.floor(q / HM_N);
+      const px = -HALF + i * CELL - x, pz = -HALF + j * CELL - z;
+      const u = c * px - sn * pz, v = sn * px + c * pz;
+      if (Math.abs(u) < w / 2 + 1.5 && Math.abs(v) < d / 2 + 1.5) { this.ctrlA[q * 4 + 1] = 255; this.forest[q] = 0; }
+    });
+  }
   clearForest(x: number, z: number, r: number) { this.paint(x, z, r, (q) => { this.forest[q] = 0; }); }
 
   // ---------- queries ----------

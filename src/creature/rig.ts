@@ -168,7 +168,7 @@ export class CreatureLib {
       tLeather: { value: tex('materials/brown_leather_diff.webp', true) }, tLeatherN: { value: tex('materials/brown_leather_nor.webp') },
       tNoiseC: { value: null },
     };
-    const m = new THREE.MeshPhysicalMaterial({ roughness: c.roughness ?? 0.78, metalness: 0, sheen: isHuman ? 0.3 : 0.8, sheenRoughness: 0.6, sheenColor: new THREE.Color(c.coat).lerp(new THREE.Color(1, 1, 1), 0.4) });
+    const m = new THREE.MeshPhysicalMaterial({ roughness: c.roughness ?? 0.78, metalness: 0, sheen: isHuman ? 0.2 : 0.35, sheenRoughness: 0.5, sheenColor: new THREE.Color(c.coat).lerp(new THREE.Color(1, 1, 1), 0.25) });
     m.onBeforeCompile = (sh) => {
       Object.assign(sh.uniforms, u);
       sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\n' + VERT_PARS).replace('#include <begin_vertex>', '#include <begin_vertex>\n' + VERT_MAIN);

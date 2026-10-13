@@ -1,6 +1,7 @@
 // Anatomy definitions: skeletons + SDF body primitives for every species.
 // Models face +z, y up, x to the creature's left. Units are metres.
 import type { Prim, V3 } from './sdf';
+import { buildQuad, HORSE, DONKEY, COW, PIG } from './quads';
 
 export interface BoneDef { name: string; parent: number; head: V3 }
 export interface Anatomy {
@@ -9,7 +10,7 @@ export interface Anatomy {
   prims: Prim[];
   cell: number;
   /** bone indices for locomotion */
-  legs?: { upper: number; lower: number; cannon: number; foot: number; side: number; front: boolean }[];
+  legs?: { upper: number; lower: number; cannon: number; foot: number; side: number; front: boolean; pole?: V3 }[];
   eyes?: { bone: number; pos: V3; r: number }[];
   kind: 'quad' | 'biped' | 'bird' | 'hopper';
 }
@@ -77,7 +78,7 @@ function quadruped(p: QuadP): Anatomy {
     legs.push({ upper: u, lower: l, cannon: c, foot: f, side, front });
     const r = p.legR * S;
     // thick upper leg blending into the body, slim lower leg, distinct hoof/foot
-    k.cone('up' + nm, [x * 0.8, legTop + r * 0.8, z0], j1, r * 1.7, r * 1.05, 0.06 * S);
+    k.cone('up' + nm, [x * 0.8, legTop + r * 0.8, z0], j1, r * 2.0, r * 1.15, 0.07 * S);
     k.cone('lo' + nm, j1, j2, r * 1.0, r * 0.62, 0.03 * S);
     k.cone('ca' + nm, j2, [foot[0], foot[1] + p.hoof * S * 0.9, foot[2]], r * 0.72, r * 0.75, 0.02 * S, p.id === 'horse' || p.id === 'donkey' ? R.sock : R.coat);
     k.box('ft' + nm, [foot[0], foot[1] + p.hoof * S * 0.45, foot[2] + 0.01 * S], [r * 0.85, p.hoof * S * 0.45, r * 0.95], r * 0.4, 0.015 * S, R.hoof);
@@ -89,7 +90,7 @@ function quadruped(p: QuadP): Anatomy {
   k.ell('chest', [0, H - p.bellyR * S * 0.6, chestZ], [W * 0.9, p.bellyR * S * 1.0, p.bellyR * S * 0.85], 0.1 * S);
   if (p.udder) k.ell('root', [0, H - p.bellyR * S * 1.75, hipZ + 0.22 * S], [0.12 * S, 0.09 * S, 0.14 * S], 0.06 * S, R.muzzle);
   // neck and head
-  k.cone('neck1', [0, neckBase[1] - 0.04 * S, neckBase[2] - 0.12 * S], neckMid, p.neckR * S * 1.25, p.neckR * S, 0.1 * S);
+  k.cone('neck1', [0, neckBase[1] - 0.1 * S, neckBase[2] - 0.15 * S], neckMid, p.neckR * S * 1.55, p.neckR * S * 1.05, 0.12 * S);
   k.cone('neck2', neckMid, headBase, p.neckR * S, p.neckR * S * 0.78, 0.05 * S);
   k.ell('head', [0, headBase[1] + 0.01 * S, headBase[2] + p.headR * S * 0.2], [p.headR * S * 0.9, p.headR * S, p.headR * S * 1.05], 0.05 * S);
   k.cone('head', [0, headBase[1], headBase[2] + p.headR * S * 0.4], snoutTip, p.headR * S * 0.8, p.muzzleR * S, 0.06 * S);
@@ -121,18 +122,10 @@ function quadruped(p: QuadP): Anatomy {
   };
 }
 
-export function horse(): Anatomy {
-  return quadruped({ id: 'horse', s: 1, back: 1.5, bellyR: 0.36, bodyLen: 1.55, bodyW: 0.3, neckLen: 0.78, neckUp: 0.85, neckR: 0.16, headLen: 0.52, headR: 0.13, muzzleR: 0.085, headDrop: 0.32, earLen: 0.14, earW: 0.035, earUp: 1.35, legLen: 1.1, legR: 0.075, hoof: 0.09, tailLen: 0.8, tailHair: true, mane: true });
-}
-export function donkey(): Anatomy {
-  return quadruped({ id: 'donkey', s: 0.82, back: 1.42, bellyR: 0.4, bodyLen: 1.42, bodyW: 0.31, neckLen: 0.62, neckUp: 0.7, neckR: 0.17, headLen: 0.55, headR: 0.15, muzzleR: 0.1, headDrop: 0.3, earLen: 0.3, earW: 0.055, earUp: 1.25, legLen: 1.0, legR: 0.07, hoof: 0.08, tailLen: 0.75, tailHair: false, mane: true });
-}
-export function cow(): Anatomy {
-  return quadruped({ id: 'cow', s: 1, back: 1.42, bellyR: 0.46, bodyLen: 1.75, bodyW: 0.38, neckLen: 0.5, neckUp: 0.35, neckR: 0.22, headLen: 0.48, headR: 0.15, muzzleR: 0.11, headDrop: 0.18, earLen: 0.16, earW: 0.06, earUp: 0.15, legLen: 0.82, legR: 0.08, hoof: 0.08, tailLen: 0.95, tailHair: false, mane: false, horns: true, udder: true });
-}
-export function pig(): Anatomy {
-  return quadruped({ id: 'pig', s: 0.62, back: 1.25, bellyR: 0.5, bodyLen: 1.65, bodyW: 0.42, neckLen: 0.22, neckUp: 0.1, neckR: 0.32, headLen: 0.48, headR: 0.24, muzzleR: 0.12, headDrop: 0.12, earLen: 0.2, earW: 0.09, earUp: 0.6, legLen: 0.52, legR: 0.085, hoof: 0.08, tailLen: 0.3, tailHair: false, mane: false, snout: true });
-}
+export function horse(): Anatomy { return buildQuad(HORSE); }
+export function donkey(): Anatomy { return buildQuad(DONKEY); }
+export function cow(): Anatomy { return buildQuad(COW); }
+export function pig(): Anatomy { return buildQuad(PIG); }
 
 export function bunny(): Anatomy {
   const k = new Sk();

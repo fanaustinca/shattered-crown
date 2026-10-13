@@ -19,6 +19,7 @@ for (const v of VIEWS) {
     if (v.time !== undefined) SC.setTime(v.time);
     if (v.overcast !== undefined) SC.setOvercast(v.overcast);
     if (v.cam) SC.view(...v.cam);
+    else if (window.__h) SC.view(window.__h.x + 9, 'g+2.2', window.__h.z + 9, window.__h.x, 'g+0.8', window.__h.z);
     for (let i = 0; i < (v.frames || 4); i++) SC.render();
     await new Promise((r) => setTimeout(r, 50));
     return SC.render();

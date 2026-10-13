@@ -37,6 +37,46 @@ All textures and models in this folder are CC0 from Poly Haven (https://polyhave
  - https://polyhaven.com/a/brown_leather
  - https://polyhaven.com/a/denim_fabric
  - https://polyhaven.com/a/rough_linen
+ - https://polyhaven.com/a/wood_table_001
+ - https://polyhaven.com/a/oak_veneer_01
+ - https://polyhaven.com/a/walnut_veneer
+ - https://polyhaven.com/a/dark_wood
+ - https://polyhaven.com/a/fine_grained_wood
+ - https://polyhaven.com/a/wood_peeling_paint_weathered
+ - https://polyhaven.com/a/blue_painted_planks
+ - https://polyhaven.com/a/worn_planks
+ - https://polyhaven.com/a/kitchen_wood
+ - https://polyhaven.com/a/wood_cabinet_worn_long
+ - https://polyhaven.com/a/stained_pine
+ - https://polyhaven.com/a/plank_flooring_02
+ - https://polyhaven.com/a/fabric_pattern_05
+ - https://polyhaven.com/a/fabric_pattern_07
+ - https://polyhaven.com/a/gingham_check
+ - https://polyhaven.com/a/quatrefoil_jacquard_fabric
+ - https://polyhaven.com/a/floral_jacquard
+ - https://polyhaven.com/a/hessian_380
+ - https://polyhaven.com/a/wool_boucle
+ - https://polyhaven.com/a/knitted_fleece
+ - https://polyhaven.com/a/velour_velvet
+ - https://polyhaven.com/a/curly_teddy_natural
+ - https://polyhaven.com/a/poly_wool_herringbone
+ - https://polyhaven.com/a/crepe_satin
+ - https://polyhaven.com/a/metal_plate
+ - https://polyhaven.com/a/green_metal_rust
+ - https://polyhaven.com/a/monastery_stone_floor
+ - https://polyhaven.com/a/stone_tiles_02
+ - https://polyhaven.com/a/clay_floor_001
+ - https://polyhaven.com/a/grey_plaster
+ - https://polyhaven.com/a/wood_shutter
+ - https://polyhaven.com/a/wooden_gate
+ - https://polyhaven.com/a/defense_wall
+ - https://polyhaven.com/a/stacked_stone_wall
+ - https://polyhaven.com/a/clay_plaster
+ - https://polyhaven.com/a/flour
+ - https://polyhaven.com/a/wooden_barrel
+ - https://polyhaven.com/a/castle_brick_02_white
+ - https://polyhaven.com/a/white_sandstone_blocks_02
+ - https://polyhaven.com/a/castle_wall_varriation
  - https://polyhaven.com/a/dutch_ship_medium
  - https://polyhaven.com/a/cannon_01
  - https://polyhaven.com/a/treasure_chest

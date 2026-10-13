@@ -42,6 +42,13 @@ export const MATERIALS = [
   'old_wood_floor', 'rough_pine_door', 'dark_wooden_planks', 'medieval_wood', 'pine_bark', 'bark_brown_02',
   'hessian_230', 'fabric_leather_02', 'rusty_metal_02', 'stone_wall_04', 'mossy_stone_wall', 'cobblestone_floor_01',
   'brown_leather', 'denim_fabric', 'rough_linen',
+  // furniture woods, fabrics, metals and floors for interiors
+  'wood_table_001', 'oak_veneer_01', 'walnut_veneer', 'dark_wood', 'fine_grained_wood', 'wood_peeling_paint_weathered',
+  'blue_painted_planks', 'worn_planks', 'kitchen_wood', 'wood_cabinet_worn_long', 'stained_pine', 'plank_flooring_02',
+  'fabric_pattern_05', 'fabric_pattern_07', 'gingham_check', 'quatrefoil_jacquard_fabric', 'floral_jacquard', 'hessian_380',
+  'wool_boucle', 'knitted_fleece', 'velour_velvet', 'curly_teddy_natural', 'poly_wool_herringbone', 'crepe_satin',
+  'metal_plate', 'green_metal_rust', 'monastery_stone_floor', 'stone_tiles_02', 'clay_floor_001', 'grey_plaster',
+  'wood_shutter', 'wooden_gate', 'defense_wall', 'stacked_stone_wall', 'clay_plaster', 'flour', 'wooden_barrel', 'castle_brick_02_white', 'white_sandstone_blocks_02', 'castle_wall_varriation',
 ];
 
 async function getJSON(url) {
