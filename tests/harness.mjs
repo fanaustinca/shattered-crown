@@ -60,6 +60,7 @@ export async function openPage(browser, url, { width = 1280, height = 720 } = {}
   await page.setViewport({ width, height });
   const logs = [], errors = [];
   page.on('console', (m) => { const t = m.text(); logs.push(`[${m.type()}] ${t}`); if (m.type() === 'error') errors.push(t); });
+  page.on('response', (r) => { if (r.status() >= 400) errors.push(`HTTP ${r.status()} ${r.url()}`); });
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
   page.setDefaultTimeout(240000);
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 120000 });

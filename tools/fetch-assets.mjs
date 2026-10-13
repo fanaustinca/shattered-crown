@@ -92,7 +92,7 @@ async function fetchModel(id, ratio) {
 async function texFiles(id) {
   const f = await getJSON(`https://api.polyhaven.com/files/${id}`);
   const pick = (k) => f[k]?.['1k']?.jpg?.url;
-  return { diff: pick('Diffuse'), nor: pick('nor_gl'), arm: pick('arm'), rough: pick('Rough'), ao: pick('AO'), disp: pick('Displacement') };
+  return { diff: pick('Diffuse') ?? pick('col_01') ?? pick('col_1') ?? pick('Color'), nor: pick('nor_gl'), arm: pick('arm'), rough: pick('Rough'), ao: pick('AO'), disp: pick('Displacement') };
 }
 
 async function fetchTerrain(id) {
