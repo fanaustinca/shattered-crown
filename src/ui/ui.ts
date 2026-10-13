@@ -25,6 +25,8 @@ export const HELP: { title: string; rows: [string, string][] }[] = [
   { title: 'War & command', rows: [['River battles', 'Skirmishes break out at the bridges between Vanguardia and Ironreach'], ['Join a side', 'Talk to a sergeant at a bridge camp'], ['2', 'Squad: follow me'], ['3', 'Squad: hold this position'], ['4', 'Squad: charge!'], ['5', 'Squad: form a line']] },
   { title: 'Law & people', rows: [['E on a person', 'Talk · F to trade with merchants and innkeepers'], ['Stealing', 'If someone sees or hears you take what is not yours, you gain a bounty in that kingdom'], ['Wanted', 'Guards will try to arrest you; posters go up at the town gates. Pay your fine with F on a guard'], ['Trespass', 'People go home at night and lock up. Don\'t be found in their house — or their bed']] },
   { title: 'Menus', rows: [['Tab / I', 'Inventory (drag items between your pack and containers; right-click an item for actions)'], ['M', 'Map'], ['H', 'This help'], ['Esc', 'Pause menu / close windows'], ['F5 / F9', 'Quick save / quick load'], ['Fast travel', 'Talk to a stable master or ferryman — you arrive at the town gates']] },
+  { title: 'World & settings', rows: [['Weather', 'Fronts roll through: clear, cloud, rain, thunderstorms, fog, and snow in the high mountains. Wind drives the waves — ships pitch and roll harder in a storm'], ['Music', 'Quiet pieces play now and then; set the music volume (or 0 to turn it off) in Settings'], ['Cloth physics', 'Dresses, cloaks and banners are simulated cloth near you; toggle it in Settings'], ['War', 'Columns of soldiers march along the roads to the river front; skirmishes break out at the bridges']] },
+  { title: 'Developer console (F12)', rows: [['help()', 'List every dev command'], ['spawn.horse(n) · spawn.cart() · spawn.ship()', 'Spawn animals, wagons, ships and boats'], ['spawn.army(side, n) · spawn.column(side)', 'Spawn soldiers, or a column marching to war'], ['spawn.item(id, n)', 'Spawn any item (spawn.items() lists them)'], ['weather(kind) · time(h) · tp(place)', 'Change the weather, the hour, or teleport']] },
 ];
 
 export class Hud {
@@ -184,6 +186,8 @@ export class UI {
           <label>Invert mouse Y <input class="inv" type="checkbox" ${settings.invertY ? 'checked' : ''}></label>
           <label>Simulation bubble (AI radius) <input class="bub" type="range" min="60" max="400" step="10" value="${settings.simRadius}"><span>${settings.simRadius} m</span></label>
           <label>Volume <input class="vol" type="range" min="0" max="1" step="0.05" value="${settings.volume}"></label>
+          <label>Music <input class="mus" type="range" min="0" max="1" step="0.05" value="${settings.music}"></label>
+          <label>Cloth physics (dresses, cloaks, banners) <input class="cloth" type="checkbox" ${settings.cloth ? 'checked' : ''}></label>
           <label>Third person by default <input class="tp" type="checkbox" ${settings.thirdPerson ? 'checked' : ''}></label>
           <label>Show FPS <input class="fps" type="checkbox" ${settings.showFps ? 'checked' : ''}></label>
           <p class="dim">Quality changes take effect after reloading the page. The simulation bubble sets how far around you people and animals are fully simulated; beyond it they follow their schedules cheaply.</p></div>`;
@@ -191,6 +195,8 @@ export class UI {
         on('.q', 'change', (el) => { settings.quality = el.value as QualityName; });
         on('.fov', 'input', (el) => { settings.fov = +el.value; (el.nextElementSibling as HTMLElement).textContent = el.value + '°'; });
         on('.sens', 'input', (el) => { settings.sensitivity = +el.value; });
+        on('.mus', 'input', (el) => { settings.music = +el.value; });
+        on('.cloth', 'change', (el) => { this.game.setCloth((el as HTMLInputElement).checked); });
         on('.inv', 'change', (el) => { settings.invertY = el.checked; });
         on('.bub', 'input', (el) => { settings.simRadius = +el.value; (el.nextElementSibling as HTMLElement).textContent = el.value + ' m'; });
         on('.vol', 'input', (el) => { settings.volume = +el.value; this.game.audio.setVolume(+el.value); });

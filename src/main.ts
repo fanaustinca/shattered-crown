@@ -1,5 +1,6 @@
 import { Game } from './game';
 import { installDebugApi } from './debug';
+import { installDevConsole } from './devconsole';
 import { coatFor } from './creature/rig';
 import * as Anim from './creature/anim';
 import * as Furn from './props/furniture';
@@ -26,6 +27,7 @@ game.init((f, m) => { bar.style.width = `${Math.round(f * 100)}%`; msg.textConte
   .then(() => {
     document.getElementById('loading')!.classList.add('done');
     game.start();
+    installDevConsole(game);
     if (!test) {
       // a slow orbit behind the title screen
       game.freeCam = true;

@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { RAPIER, groups, G_VEHICLE, ALL, v3, q4 } from '../physics/physics';
 import type { Game } from '../game';
 import { instanceModel } from '../props/models';
-import { seaHeight, waterUniforms } from '../render/water';
+import { seaHeight, riverChop, waterUniforms } from '../render/water';
 import { sharedUniforms } from '../render/pipeline';
 import { GeoBuilder } from '../build/geom';
 import { meshesFrom } from '../props/palette';
@@ -295,6 +295,7 @@ export class Ship implements Interactable {
       const wp = lp.clone().applyQuaternion(q).add(p);
       let wl = g.world.waterLevelAt(wp.x, wp.z);
       if (wl === 0) wl = seaHeight(wp.x, wp.z, t, amp);
+      else wl += riverChop(wp.x, wp.z, t, amp);
       const depth = wl - wp.y;
       if (depth > 0) {
         submergedPts++;

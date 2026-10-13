@@ -206,6 +206,8 @@ export class CreatureLib {
     { female: true, build: 0.5, dress: false, beard: false, hairLong: true },
     { female: false, build: 0.6, dress: false, beard: true, hairLong: false, armor: true },
     { female: false, build: 0.2, dress: false, beard: false, hairLong: true },
+    // 6: the dress variant with its skirt left to the cloth system (a real draping skirt hangs from the hips)
+    { female: true, build: 0, dress: true, beard: false, hairLong: true, clothSkirt: true },
   ];
 
   constructor(private lighting: Lighting) {}

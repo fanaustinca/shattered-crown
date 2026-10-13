@@ -37,11 +37,15 @@ export interface Settings {
   volume: number;
   thirdPerson: boolean;
   showFps: boolean;
+  /** ambient music volume (0 = off) */
+  music: number;
+  /** real-time cloth simulation for dresses, cloaks, banners, sails */
+  cloth: boolean;
 }
 
 const KEY = 'shattered-crown.settings.v1';
 export const settings: Settings = {
-  quality: 'high', fov: 72, sensitivity: 1, invertY: false, simRadius: 160, volume: 0.8, thirdPerson: false, showFps: false,
+  quality: 'high', fov: 72, sensitivity: 1, invertY: false, simRadius: 160, volume: 0.8, thirdPerson: false, showFps: false, music: 0.6, cloth: true,
 };
 try {
   const s = JSON.parse(localStorage.getItem(KEY) || '{}');

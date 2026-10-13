@@ -5,7 +5,7 @@ import { GeoBuilder } from './geom';
 import type { WallPlan } from '../world/towns';
 import type { Bridge } from '../world/layout';
 
-export interface StructModel { geo: GeoBuilder; colliders: { c: THREE.Vector3; h: THREE.Vector3; q?: THREE.Quaternion }[]; gates: { pos: THREE.Vector3; yaw: number; w: number; h: number }[]; torches: THREE.Vector3[] }
+export interface StructModel { geo: GeoBuilder; colliders: { c: THREE.Vector3; h: THREE.Vector3; q?: THREE.Quaternion }[]; gates: { pos: THREE.Vector3; yaw: number; w: number; h: number }[]; torches: THREE.Vector3[]; flags?: { pos: THREE.Vector3; style: 'stone' | 'dark' | 'palisade' }[] }
 
 const q = (yaw: number) => new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
 
@@ -83,8 +83,12 @@ export function buildWalls(plan: WallPlan, ground: (x: number, z: number) => num
     for (let k = 0; k < 16; k++) { const ca = (k / 16) * Math.PI * 2; g.push().translate(a[0] + Math.cos(ca) * (tr + 0.25), ty + th - 0.5, a[1] + Math.sin(ca) * (tr + 0.25)).rotateY(-ca); g.box(cap, 0, 0, 0, 0.5, 0.7, 0.35, 0.6); g.pop(); }
     g.cyl(cap, a[0], ty + th, a[1], tr + 0.5, tr + 0.5, 0.6, 24, true, 0.4);
     for (let k = 0; k < 12; k++) { const ca = (k / 12) * Math.PI * 2; g.push().translate(a[0] + Math.cos(ca) * (tr + 0.2), ty + th + 0.6 + 0.6, a[1] + Math.sin(ca) * (tr + 0.2)).rotateY(-ca); g.box(cap, 0, 0, 0, 0.6, 1.2, 1.2, 0.5); g.pop(); }
-    // conical roof on every other tower
+    // conical roof on every other tower; a flagpole with the kingdom's banner on the rest
     if (i % 2 === 0) g.cyl('mat:roof_slates_02', a[0], ty + th + 0.6, a[1], tr + 0.7, 0.05, tr * 1.6, 24, false, 0.5);
+    else {
+      g.cyl('wood:dark|stain:ebony|fin:oiled', a[0], ty + th + 0.6, a[1], 0.07, 0.05, 5.5, 8, true, 1);
+      (out.flags ??= []).push({ pos: new THREE.Vector3(a[0], ty + th + 6.0, a[1]), style: plan.style });
+    }
     out.colliders.push({ c: new THREE.Vector3(a[0], ty + th / 2, a[1]), h: new THREE.Vector3(tr * 0.85, th / 2, tr * 0.85), q: q(0) });
     // arrow slits as dark recesses
     for (let k = 0; k < 4; k++) { const ca = (k / 4) * Math.PI * 2 + 0.4; g.push().translate(a[0] + Math.cos(ca) * (tr + 0.31), ty + th * 0.6, a[1] + Math.sin(ca) * (tr + 0.31)).rotateY(-ca + Math.PI / 2); g.box('color:080808', 0, 0, 0, 0.15, 1.4, 0.05); g.pop(); }

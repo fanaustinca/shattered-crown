@@ -16,20 +16,28 @@ export const WAVES: [number, number, number, number][] = [
 
 export const waterUniforms = {
   uWaveAmp: { value: 0.7 },      // overall sea state (weather)
+  uWaveRot: { value: 0 },        // the swell turns to run with the wind
   tWaterNormal: { value: null as THREE.Texture | null },
   uSSR: { value: 1 },
 };
 
 /** CPU evaluation of the sea surface height (for buoyancy), matching the shader. */
-export function seaHeight(x: number, z: number, t: number, amp: number): number {
+export function seaHeight(x: number, z: number, t: number, amp: number, rot = waterUniforms.uWaveRot.value): number {
   // Gerstner: approximate height at (x,z) ignoring the small horizontal displacement
   let y = 0;
-  for (const [dx, dz, st, L] of WAVES) {
+  const cr = Math.cos(rot), sr = Math.sin(rot);
+  for (const [dx0, dz0, st, L] of WAVES) {
+    const dx = dx0 * cr - dz0 * sr, dz = dx0 * sr + dz0 * cr;
     const l = Math.hypot(dx, dz), k = (2 * Math.PI) / L, c = Math.sqrt(9.8 / k);
     const a = (st / k) * amp;
     y += a * Math.sin(k * ((dx / l) * x + (dz / l) * z) - c * k * t * 1.0);
   }
   return y;
+}
+/** Wind chop on the river (matches the shader). */
+export function riverChop(x: number, z: number, t: number, amp: number): number {
+  const a = amp * 0.035;
+  return a * (Math.sin(x * 0.9 + t * 1.7) + Math.sin(z * 0.7 - t * 1.3) + 0.5 * Math.sin((x + z) * 1.9 + t * 2.6));
 }
 
 function makeNormalTexture(size = 256): THREE.DataTexture {
@@ -63,7 +71,7 @@ function makeNormalTexture(size = 256): THREE.DataTexture {
 }
 
 const VERT = /* glsl */ `
-uniform float uTime, uWaveAmp;
+uniform float uTime, uWaveAmp, uWaveRot;
 uniform vec2 uWind;
 attribute float aKind;      // 0 sea, 1 river, 2 lake
 attribute vec2 aFlow;       // river flow direction * speed
@@ -88,7 +96,7 @@ void main() {
     float amp = uWaveAmp * smoothstep(0.0, 7.0, depth) * (1.0 - smoothstep(1500.0, 5000.0, dist));
     vec3 disp = vec3(0.0); vec3 tx = vec3(1.0, 0.0, 0.0), tz = vec3(0.0, 0.0, 1.0);
     for (int i = 0; i < NW; i++) {
-      vec2 d = normalize(WV[i].xy);
+      vec2 d = mat2(cos(uWaveRot), sin(uWaveRot), -sin(uWaveRot), cos(uWaveRot)) * normalize(WV[i].xy);
       float k = 6.2831853 / WV[i].w, c = sqrt(9.8 / k);
       float a = WV[i].z / k * amp;
       float f = k * (dot(d, p.xz) - c * uTime);
@@ -100,6 +108,12 @@ void main() {
     }
     p += disp;
     n = normalize(cross(tz, tx));
+  } else if (aKind < 1.5) {
+    // wind chop on the river
+    float a = uWaveAmp * 0.035;
+    p.y += a * (sin(p.x * 0.9 + uTime * 1.7) + sin(p.z * 0.7 - uTime * 1.3) + 0.5 * sin((p.x + p.z) * 1.9 + uTime * 2.6));
+    vec2 gr = a * vec2(0.9 * cos(p.x * 0.9 + uTime * 1.7) + 0.95 * cos((p.x + p.z) * 1.9 + uTime * 2.6), 0.7 * cos(p.z * 0.7 - uTime * 1.3) + 0.95 * cos((p.x + p.z) * 1.9 + uTime * 2.6));
+    n = normalize(vec3(-gr.x, 1.0, -gr.y));
   }
   vWorld = p;
   vNormalW = n;

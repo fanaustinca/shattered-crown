@@ -8,7 +8,7 @@ import { Terrain } from './render/terrain';
 import { Grass, sunDirRef } from './render/grass';
 import { Trees } from './render/trees';
 import { Water } from './render/water';
-import { QUALITY, settings, guessQuality, type Quality } from './core/settings';
+import { QUALITY, settings, saveSettings, guessQuality, type Quality } from './core/settings';
 import { Physics, groups, G_STATIC, G_VEHICLE } from './physics/physics';
 import { Input } from './core/input';
 import { Player } from './player/player';
@@ -37,6 +37,8 @@ import { mulberry32 } from './core/noise';
 import type { Placed } from './world/towns';
 import { VERSION } from './version';
 import { frameStamp, flushBoneAtlas } from './creature/rig';
+import { Music } from './core/music';
+import { ClothSystem } from './render/cloth';
 
 export type Progress = (f: number, msg: string) => void;
 
@@ -133,6 +135,11 @@ export class Game {
   freeCam = false;
   treeColliders = new Map<number, unknown>();
   frameMs = 16;
+  music = new Music();
+  private clothDt = 0;
+  cloth!: ClothSystem;
+  get clothOn() { return settings.cloth; }
+  setCloth(on: boolean) { settings.cloth = on; saveSettings(); this.cloth?.setEnabled(on); }
   avgFrame = 16;
   frameNo = 0;
   shake = 0;
@@ -201,7 +208,18 @@ export class Game {
     progress(0.94, 'Carving furniture');
     await this.props.preloadAll();
     this.settlements = new Settlements(this.world, this.physics, this.scene, this.props, this.towns);
+    this.cloth = new ClothSystem(this.scene, (x, z) => this.world.heightAt(x, z));
+    this.cloth.setEnabled(settings.cloth);
     this.settlements.buildStatic();
+    // the kingdoms' banners stream from the towers
+    for (const f of this.settlements.flags) {
+      const pole = new THREE.Object3D();
+      pole.position.copy(f.pos);
+      pole.rotation.y = Math.random() * Math.PI * 2;
+      this.scene.add(pole); pole.updateMatrixWorld(true);
+      const iron = f.style === 'dark';
+      this.cloth.banner(pole, 2.2, 1.4, iron ? 0x7a1612 : 0x22407a, pole);
+    }
     this.lightPool = new LightPool(this.scene, this.q.name === 'low' ? 4 : 8);
     this.props.insideAt = (p) => !!this.settlements.inside(p);
     this.props.coldAt = (p) => { const l = this.settlements.inside(p); return !!l && p.y < l.root.position.y + 0.3; };
@@ -217,6 +235,15 @@ export class Game {
     this.playerBody = new PlayerBody(this);
     this.combat = new Combat(this);
     this.weather = new Weather(this);
+    this.music.moodHint = () => {
+      const p = this.player.pos, h = this.hours, w = this.weather.cur;
+      if (w.rain > 0.3 || w.snow > 0.4) return 'rain';
+      if (h < 5.5 || h > 20.5) return 'night';
+      if (h > 18 || h < 7) return 'dusk';
+      if (this.world.heightAt(p.x, p.z) > 110 || this.world.eastAt(p.x, p.z) > 0.6) return 'mountain';
+      if (this.world.waterLevelAt(p.x, p.z) > this.world.heightAt(p.x, p.z) || Math.hypot(p.x, p.z) > 2700) return 'sea';
+      return 'day';
+    };
     this.hud = new Hud(this);
     this.ui = new UI(this);
     this.law = new Law(this);
@@ -258,7 +285,7 @@ export class Game {
     progress(0.99, 'Lighting the hearths');
     this.resize();
     window.addEventListener('resize', () => this.resize());
-    this.weather.set('clear', true);
+    if (new URLSearchParams(location.search).has('test')) this.weather.set('clear', true); else this.weather.randomize();
     this.ready = true;
     progress(1, 'Ready');
   }
@@ -383,9 +410,22 @@ export class Game {
     this.playerBody.update(dt);
     this.particles.update(dt, this.camera.position);
     this.ambience(dt);
+    this.updateMusic(dt);
+    this.clothDt += dt;
     this.mark('fx');
     if (this.input.hit('KeyB') && false) void 0;
     this.input.endFrame();
+  }
+
+  private updateMusic(dt: number) {
+    const ctx = this.audio.ctx;
+    if (!ctx) return;
+    this.music.attach(ctx, this.audio.master);
+    const p = this.player.pos;
+    // fights duck the music; it keeps quiet while blades are out nearby
+    const fight = this.residents.live.some((n) => n.hostile && n.st.pos.distanceToSquared(p) < 900) || this.war.soldiers.some((s) => s.alive && s.fightTarget && s.st.pos.distanceToSquared(p) < 3600);
+    this.music.duck += ((fight ? 1 : 0) - this.music.duck) * Math.min(1, dt * 0.5);
+    this.music.update(dt);
   }
 
   startSleep(hours: number) {
@@ -530,6 +570,9 @@ export class Game {
     fu.uWetLens.value = this.weather && !this.lighting.interior ? this.weather.cur.rain : 0;
     // one scene-graph update per frame (the opaque and water passes would each redo it), then skin once
     this.scene.updateMatrixWorld();
+    // cloth follows this frame's bones, then its own meshes get their world matrices
+    this.cloth.update(Math.min(this.clothDt, 0.1), this.camera.position, this.time);
+    this.clothDt = 0;
     flushBoneAtlas(this.renderer);
     this.pipeline.render();
     this.mark('r:submit');

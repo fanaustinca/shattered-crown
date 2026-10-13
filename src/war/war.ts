@@ -2,6 +2,8 @@
 // (smoke, recoil, crew reloading), skirmish waves that clash on the bridges, and — once you enlist —
 // a squad that follows your orders. Cannons can be manned by the player.
 import * as THREE from 'three';
+import { material } from '../props/palette';
+import { ROADS } from '../world/layout';
 import { RAPIER, groups, G_STATIC, G_PROP, ALL, v3 } from '../physics/physics';
 import type { Game } from '../game';
 import { NPC } from '../npc/npc';
@@ -20,6 +22,9 @@ export class Soldier extends NPC {
   side: Side;
   order: 'advance' | 'follow' | 'hold' | 'charge' | 'line' = 'advance';
   squad = false;
+  /** part of a column on the march (keeps its road path instead of the camp AI) */
+  marching = false;
+  standard = false;
   constructor(game: Game, side: Side, pos: THREE.Vector3) {
     const person: Person = {
       id: 'soldier-' + SID++, name: side === 'vanguardia' ? ['Sir Aldo', 'Pikeman Bram', 'Archer Joss', 'Sergeant Wynne', 'Footman Cael', 'Hal of Millbrook'][SID % 6] : ['Varr Grunt', 'Iron Bjorn', 'Kael Ashhand', 'Ulf the Grim', 'Dagny', 'Thorvald'][SID % 6],
@@ -65,8 +70,86 @@ export class War {
   group = new THREE.Group();
   constructor(public game: Game) { game.scene.add(this.group); }
 
+  /** Marching routes: roads that end at a bridge, oriented toward the river, per side. */
+  routes: { side: Side; pts: THREE.Vector3[] }[] = [];
+  columnT = 25;
+  private buildRoutes() {
+    const g = this.game;
+    ROADS.forEach((rd, i) => {
+      const first = rd.pts[0], last = rd.pts[rd.pts.length - 1];
+      const end = typeof last === 'string' && last.startsWith('B') ? last : typeof first === 'string' && first.startsWith('B') ? first : null;
+      const path = g.world.roads[i];
+      if (!end || !path) return;
+      const side: Side = end.endsWith('w') ? 'vanguardia' : 'ironreach';
+      const pts: THREE.Vector3[] = [];
+      for (let k = 0; k < path.pts.length; k += 9) pts.push(new THREE.Vector3(path.pts[k], path.pts[k + 2], path.pts[k + 1]));
+      if (end === first) pts.reverse();
+      this.routes.push({ side, pts });
+    });
+  }
+  /** A pole in the right hand with the kingdom's banner streaming from its top. */
+  carryStandard(s: Soldier) {
+    const hand = s.rig.byName.handR;
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 3.2, 8), material('wood:dark|stain:ebony|fin:oiled'));
+    pole.castShadow = true;
+    // the rig's bones are in its bind frame: place the pole upright in model space at the hand
+    pole.position.set(0, 1.2, 0.05);
+    hand.add(pole);
+    const top = new THREE.Object3D(); top.position.set(0, 1.55, 0); pole.add(top);
+    this.game.cloth.banner(top, 0.9, 1.2, s.side === 'vanguardia' ? 0x22407a : 0x7a1612, s);
+  }
+  spawnSoldier(side: Side, pos: THREE.Vector3) {
+    const s = new Soldier(this.game, side, pos.clone().setY(this.game.world.heightAt(pos.x, pos.z)));
+    this.game.physics.owners.set(s.collider.handle, { kind: 'soldier', soldier: s, npc: s });
+    this.soldiers.push(s);
+    return s;
+  }
+  /** A column of soldiers marching down a road to the war, in ranks behind a standard-bearer. */
+  spawnColumn(side?: Side, n = 16, near = this.game.player.pos) {
+    const g = this.game;
+    if (!this.routes.length) this.buildRoutes();
+    // a road of that side passing 150-500 m from `near`, joined at that point
+    const cands: { r: { side: Side; pts: THREE.Vector3[] }; i: number }[] = [];
+    for (const r of this.routes) {
+      if (side && r.side !== side) continue;
+      for (let i = 0; i < r.pts.length - 8; i += 4) { const d = r.pts[i].distanceTo(near); if (d > 150 && d < 520) cands.push({ r, i }); }
+    }
+    if (!cands.length) for (const r of this.routes) if (!side || r.side === side) cands.push({ r, i: Math.max(0, r.pts.length - 60) });
+    if (!cands.length) return 0;
+    const { r, i } = cands[Math.floor(Math.random() * cands.length)];
+    const route = r.pts.slice(i);
+    const ranks = Math.ceil(n / 3);
+    let made = 0;
+    for (let k = 0; k < n; k++) {
+      const rank = Math.floor(k / 3), file = (k % 3) - 1;
+      // each soldier walks the road offset into its file, the rank trailing behind
+      const path: THREE.Vector3[] = [];
+      for (let j = 0; j < route.length; j++) {
+        const a = route[Math.max(0, j - 1)], b = route[Math.min(route.length - 1, j + 1)];
+        const dir = b.clone().sub(a).setY(0).normalize();
+        const side3 = new THREE.Vector3(-dir.z, 0, dir.x);
+        const q = route[j].clone().addScaledVector(side3, file * 1.3);
+        q.y = g.world.heightAt(q.x, q.z);
+        path.push(q);
+      }
+      const d0 = route[1].clone().sub(route[0]).setY(0).normalize();
+      const start = path[0].clone().addScaledVector(d0, -rank * 1.9 - (ranks - rank) * 0);
+      start.y = g.world.heightAt(start.x, start.z);
+      const s = new Soldier(g, r.side, start);
+      g.physics.owners.set(s.collider.handle, { kind: 'soldier', soldier: s, npc: s });
+      s.path = path.slice(1);
+      s.st.yaw = Math.atan2(d0.x, d0.z);
+      s.marching = true;
+      if (k === 1) { s.standard = true; this.carryStandard(s); }
+      this.soldiers.push(s);
+      made++;
+    }
+    return made;
+  }
+
   build() {
     const g = this.game;
+    this.buildRoutes();
     for (const b of g.world.bridges) {
       const ax = Math.cos(b.yaw), az = -Math.sin(b.yaw);
       for (const [side, sgn] of [['vanguardia', -1], ['ironreach', 1]] as [Side, number][]) {
@@ -99,10 +182,15 @@ export class War {
     }
     // banner
     g.cyl('wood:dark|stain:ebony|fin:oiled', 3, 0, 4, 0.05, 0.05, 6, 8);
-    g.box(`cloth:velvet|dye:${side === 'vanguardia' ? 'woad' : 'madder'}`, 3.6, 5.2, 4, 1.2, 1.6, 0.02, 1);
+
     // campfire ring
     for (let i = 0; i < 9; i++) { const a = i * 0.7; g.ellipsoid('stone:stacked_stone_wall', Math.cos(a) * 0.7, 0.08, 4 + Math.sin(a) * 0.7 - 4, 0.14, 0.1, 0.12, 6); }
     for (const m of meshesFrom(g.build())) this.group.add(m);
+    const pole = new THREE.Object3D();
+    pole.position.set(3, 5.9, 4).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw).add(pos);
+    pole.rotation.y = yaw;
+    this.game.scene.add(pole); pole.updateMatrixWorld(true);
+    this.game.cloth.banner(pole, 1.3, 1.7, side === 'vanguardia' ? 0x22407a : 0x7a1612, pole);
     this.game.particles.emitters.push({ pos: pos.clone().add(new THREE.Vector3(0, 0.25, 0)), kind: 'campfire', acc: 0 });
     this.game.campfires.push(pos.clone().add(new THREE.Vector3(0, 0.4, 0)));
   }
@@ -213,10 +301,16 @@ export class War {
         g.physics.world.removeRigidBody(b.body); b.mesh.removeFromParent(); this.balls.splice(i, 1);
       }
     }
+    // columns marching to the front along the roads, whichever kingdom you're in
+    this.columnT -= dt;
+    if (this.columnT <= 0) {
+      this.columnT = 110 + Math.random() * 120;
+      if (this.soldiers.filter((x) => x.alive).length < 60) this.spawnColumn(undefined, 12 + Math.floor(Math.random() * 4) * 3);
+    }
     // skirmish waves near the player
     const nearCamp = this.camps.filter((c) => c.pos.distanceTo(p) < 700);
     this.waveT -= dt;
-    if (nearCamp.length && this.waveT <= 0 && this.soldiers.filter((s) => s.alive).length < 20) {
+    if (nearCamp.length && this.waveT <= 0 && this.soldiers.filter((s) => s.alive).length < 50) {
       this.waveT = 70 + Math.random() * 60;
       const br = nearCamp[0].bridge;
       for (const c of this.camps.filter((k) => k.bridge === br)) for (let i = 0; i < 4; i++) {
@@ -245,10 +339,11 @@ export class War {
       let best: Soldier | null = null, bd = s.squad && s.order === 'follow' ? 18 : 60;
       for (const e of enemies) { const d = e.st.pos.distanceTo(s.st.pos); if (d < bd) { bd = d; best = e; } }
       if (s.order === 'hold' && best && bd > 8) best = null;
+      if (s.marching) { if (best && bd < 25) s.marching = false; else best = null; if (s.marching && !s.path.length) s.marching = false; }
       s.fightTarget = best;
       // enemies of the player's side fight the player too
       s.hostile = !!this.enlisted && this.enlisted !== s.side && s.st.pos.distanceTo(p) < 25;
-      if (!best && !s.hostile) {
+      if (!best && !s.hostile && !s.marching) {
         if (s.squad && (s.order === 'follow' || s.order === 'line')) {
           const idx = this.soldiers.filter((x) => x.squad).indexOf(s);
           const right = new THREE.Vector3(Math.cos(g.player.yaw), 0, -Math.sin(g.player.yaw));

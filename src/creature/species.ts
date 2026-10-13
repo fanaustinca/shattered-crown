@@ -198,7 +198,7 @@ export function bird(variant: 'sparrow' | 'crow' | 'pigeon' | 'chicken'): Anatom
   return { id: variant, bones: k.bones, prims: k.prims, cell: 0.0022 * s, kind: 'bird', eyes: [1, -1].map((sd) => ({ bone: k.i('head'), pos: [sd * 0.016 * s, (h + 0.07) * s, 0.064 * s] as V3, r: 0.0045 * s })) };
 }
 
-export interface HumanP { female: boolean; build: number; dress: boolean; beard: boolean; hairLong: boolean; armor?: boolean }
+export interface HumanP { female: boolean; build: number; dress: boolean; beard: boolean; hairLong: boolean; armor?: boolean; clothSkirt?: boolean }
 export function human(p: HumanP): Anatomy {
   const k = new Sk();
   const f = p.female, b = p.build;
@@ -229,7 +229,8 @@ export function human(p: HumanP): Anatomy {
   k.ell('hips', [0, 1.0, 0.0], [hipW * 1.5 * g, 0.03, 0.125 * g], 0.02, R.belt);
   // skirt of the tunic / dress
   const hem = p.dress ? 0.12 : 0.72;
-  k.cone('hips', [0, 1.0, 0], [0, hem, -0.01], 0.17 * g, p.dress ? 0.3 : 0.2 * g, 0.03, R.cloth1);
+  if (p.clothSkirt) k.cone('hips', [0, 1.0, 0], [0, 0.9, -0.005], 0.17 * g, 0.185 * g, 0.03, R.cloth1);   // waistband; the skirt is cloth
+  else k.cone('hips', [0, 1.0, 0], [0, hem, -0.01], 0.17 * g, p.dress ? 0.3 : 0.2 * g, 0.03, R.cloth1);
   // neck and head
   k.cone('neck', [0, 1.46, 0.0], [0, 1.58, 0.015], 0.055, 0.05, 0.03, R.skin);
   k.ell('head', [0, 1.69, 0.015], [0.082, 0.105, 0.098], 0.02, R.skin);

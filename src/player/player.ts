@@ -99,8 +99,10 @@ export class Player {
   eyePos(out = new THREE.Vector3()) { return out.set(this.pos.x, this.pos.y + this.eyeHeight, this.pos.z); }
   forward(out = new THREE.Vector3()) { return out.set(-Math.sin(this.yaw) * Math.cos(this.pitch), Math.sin(this.pitch), -Math.cos(this.yaw) * Math.cos(this.pitch)); }
 
+  /** dev: no damage */
+  god = false;
   hurt(limb: Limb, dmg: number, src = 'hit', bleed = 0) {
-    if (!this.alive) return;
+    if (!this.alive || this.god) return;
     this.health[limb] = Math.max(0, this.health[limb] - dmg);
     this.bleeding += bleed;
     this.onHurt?.(limb, dmg, src);

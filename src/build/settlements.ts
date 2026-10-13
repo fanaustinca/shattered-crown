@@ -100,6 +100,8 @@ export class Settlements {
   private queued = new Set<Placed>();
   townLod = new Map<string, { meshes: THREE.Mesh[]; flags: THREE.DataTexture; index: Map<string, number> }>();
   torches: THREE.Vector3[] = [];
+  /** banner poles on the fortifications (the game hangs cloth banners on them) */
+  flags: { pos: THREE.Vector3; style: string }[] = [];
   saved = new Map<string, { id: string; pos: THREE.Vector3; quat: THREE.Quaternion; owner: string | null; age: number }[]>();
   candleState = new Map<string, number[]>();
   /** building shells (exterior, colliders, front doors) */
@@ -133,6 +135,7 @@ export class Settlements {
         this.phys.world.createCollider(d, body);
       }
       this.torches.push(...s.torches);
+      if (s.flags) this.flags.push(...s.flags);
     };
     for (const p of this.towns.plans) {
       if (p.walls) add(buildWalls(p.walls, ground));

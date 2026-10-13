@@ -49,11 +49,12 @@ export function material(key: string): THREE.Material {
       m = w; break;
     }
     case 'cloth': {
-      const base = pbr(FABRICS[name] ?? FABRICS.linen, { color: DYES[opts.dye ?? 'undyed'] ?? 0xffffff }).clone() as THREE.MeshStandardMaterial;
+      const dyeCol = opts.tint ? parseInt(opts.tint, 16) : DYES[opts.dye ?? 'undyed'] ?? 0xffffff;
+      const base = pbr(FABRICS[name] ?? FABRICS.linen, { color: dyeCol }).clone() as THREE.MeshStandardMaterial;
       const phys = new THREE.MeshPhysicalMaterial({
         map: base.map, normalMap: base.normalMap, aoMap: base.aoMap, roughnessMap: base.roughnessMap, color: base.color,
         roughness: 1, metalness: 0, sheen: name === 'velvet' || name === 'satin' || name === 'fur' ? 0.9 : 0.35, sheenRoughness: name === 'satin' ? 0.3 : 0.7,
-        sheenColor: new THREE.Color(DYES[opts.dye ?? 'undyed'] ?? 0xffffff).lerp(new THREE.Color(1, 1, 1), 0.5), side: THREE.DoubleSide,
+        sheenColor: new THREE.Color(dyeCol).lerp(new THREE.Color(1, 1, 1), 0.5), side: THREE.DoubleSide,
       });
       if (opts.rep) for (const t of [phys.map, phys.normalMap, phys.aoMap, phys.roughnessMap]) if (t) t.repeat.setScalar(+opts.rep);
       m = phys; break;

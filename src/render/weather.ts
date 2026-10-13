@@ -80,14 +80,19 @@ export class Weather {
   get raining() { return this.cur.rain > 0.2 && !this.coldHere(); }
   coldHere() { const p = this.game.player.pos; return this.game.world.heightAt(p.x, p.z) > 190 || (this.game.world.eastAt(p.x, p.z) > 0.6 && this.game.world.heightAt(p.x, p.z) > 120); }
 
-  set(kind: WeatherKind, instant = false) { this.next = kind; this.kind = kind; this.timer = 600 + Math.random() * 900; if (instant) this.cur = { ...PROFILE[kind] }; }
+  set(kind: WeatherKind, instant = false) { this.next = kind; this.kind = kind; this.timer = 300 + Math.random() * 600; if (instant) this.cur = { ...PROFILE[kind] }; }
+  /** Fronts come and go: pick a starting sky so every session doesn't open on the same weather. */
+  randomize() {
+    const r = Math.random();
+    this.set(r < 0.4 ? 'clear' : r < 0.65 ? 'cloudy' : r < 0.78 ? 'overcast' : r < 0.9 ? 'rain' : r < 0.95 ? 'fog' : 'storm', true);
+  }
 
   update(dt: number) {
     const g = this.game;
     this.timer -= dt;
     if (this.timer <= 0) {
       const r = Math.random();
-      const opts: WeatherKind[] = this.kind === 'clear' ? ['clear', 'cloudy', 'cloudy', 'fog'] : this.kind === 'cloudy' ? ['clear', 'overcast', 'rain', 'cloudy'] : this.kind === 'overcast' ? ['rain', 'cloudy', 'storm', 'snow'] : this.kind === 'rain' ? ['overcast', 'storm', 'cloudy'] : this.kind === 'storm' ? ['rain', 'overcast'] : ['cloudy', 'clear'];
+      const opts: WeatherKind[] = this.kind === 'clear' ? ['clear', 'cloudy', 'cloudy', 'fog', 'overcast'] : this.kind === 'cloudy' ? ['clear', 'overcast', 'rain', 'cloudy'] : this.kind === 'overcast' ? ['rain', 'cloudy', 'storm', 'snow'] : this.kind === 'rain' ? ['overcast', 'storm', 'cloudy'] : this.kind === 'storm' ? ['rain', 'overcast'] : ['cloudy', 'clear'];
       this.set(opts[Math.floor(r * opts.length)]);
     }
     let target = { ...PROFILE[this.kind] };
@@ -98,7 +103,9 @@ export class Weather {
     for (const key of Object.keys(target) as (keyof typeof target)[]) this.cur[key] += (target[key] - this.cur[key]) * k;
     // wind direction wanders
     this.windDir += (Math.sin(g.time * 0.01) * 0.002) * dt * 60;
-    const w = this.cur.wind;
+    // gusts ride on the mean wind (stronger and more ragged in storms)
+    const gust = 1 + (0.12 + this.cur.wind * 0.08) * (Math.sin(g.time * 0.37) * 0.6 + Math.sin(g.time * 1.13 + 1.7) * 0.4);
+    const w = this.cur.wind * gust;
     sharedUniforms.uWind.value.set(Math.cos(this.windDir) * w, Math.sin(this.windDir) * w);
     // ground wetness and snow cover accumulate and dry/melt
     this.wetness = THREE.MathUtils.clamp(this.wetness + (this.cur.rain > 0.1 ? dt * 0.01 * this.cur.rain : -dt * 0.002 * (0.3 + g.lighting.dayFactor)), 0, 1);
@@ -106,7 +113,9 @@ export class Weather {
     sharedUniforms.uWetness.value = this.wetness;
     sharedUniforms.uRain.value = this.cur.rain;
     sharedUniforms.uSnow.value = this.snowCover;
-    waterUniforms.uWaveAmp.value = 0.45 + w * 0.45 + this.cur.rain * 0.3;
+    // sea state follows the wind: a gentle swell in fair weather, steep running seas in a storm
+    waterUniforms.uWaveAmp.value = Math.min(2.8, 0.35 + w * 0.5 + w * w * 0.32 + this.cur.rain * 0.25);
+    waterUniforms.uWaveRot.value = this.windDir - Math.atan2(0.3, 1.0);
     g.overcast = this.cur.overcast;
     const au = g.pipeline.atmoUniforms;
     au.uCloudCover.value = this.cur.cover;

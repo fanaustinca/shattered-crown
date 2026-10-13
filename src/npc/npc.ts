@@ -55,7 +55,11 @@ export class NPC {
       coat: 0, cloth1: guard ? (fac === 'ironreach' ? 0x5a1a14 : 0x2a3a6a) : dye(), cloth2: guard ? 0x3a3a3c : dye(), boots: 0x2a1c12,
       skin: SKIN_TONES[person.skin % SKIN_TONES.length], hair: HAIR_COLORS[person.hair % HAIR_COLORS.length], belt: 0x2a1a0a,
     };
-    this.rig = game.creatures.instance('human' + person.variant, coat);
+    // dresses are real cloth: the body without its baked skirt, and a draping skirt on the hips
+    const dress = person.variant === 2;
+    this.rig = game.creatures.instance('human' + (dress ? 6 : person.variant), coat);
+    if (dress) game.cloth.skirt(this.rig, coat.cloth1 as number, 1, 0.1, this);
+    if (guard && person.role !== 'guard' || (guard && r() < 0.5)) game.cloth.cloak(this.rig, fac === 'ironreach' ? 0x3a1210 : 0x1a2648, this);
     this.anim = new BipedAnimator(this.rig, (x, z) => game.groundAt(x, z, this.st?.pos.y ?? 999));
     this.anim.heightScale = person.role === 'child' ? 0.62 + (person.age - 6) * 0.025 : person.female ? 0.95 : 1 + (r() - 0.5) * 0.08;
     this.st = { pos: pos.clone(), yaw: r() * 6.28, speed: 0, turn: 0, vel: new THREE.Vector3(), action: 'idle', look: null };
@@ -90,6 +94,7 @@ export class NPC {
     this.game.scene.remove(this.rig.root);
     this.game.physics.removeBody(this.body);
     this.game.physics.world.removeCharacterController(this.kcc);
+    this.game.cloth.remove(this);
     releaseRig(this.rig);
   }
   say(text: string, sound = false) {
@@ -193,7 +198,7 @@ export class NPC {
         goal = this.path[0];
         const d = Math.hypot(goal.x - st.pos.x, goal.z - st.pos.z);
         if (d < (this.path.length === 1 ? 0.7 : 0.45)) { this.path.shift(); goal = this.path[0] ?? null; }
-        speed = this.activity === 'shelter' ? 3.2 : 1.35;
+        speed = this.activity === 'shelter' ? 3.2 : (this as { marching?: boolean }).marching ? 1.6 : 1.35;
       } else if (this.waitT > 0) this.waitT -= dt;
       st.action = this.activity === 'sleep' ? 'sleep' : 'idle';
       // look at the player when they are close and staring
@@ -521,6 +526,7 @@ export class Law {
   log: { crime: string; t: number; where: string }[] = [];
   constructor(public game: Game) {}
   bountyIn(k: Kingdom) { return Math.round(this.bounty[k] ?? 0); }
+  clear() { for (const k of Object.keys(this.bounty)) this.bounty[k] = 0; }
   get wanted() { return Math.max(...Object.values(this.bounty)); }
   /**
    * Report a crime at pos. When `needsWitness`, only counts if someone sees or hears it.
