@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { CSM } from 'three/examples/jsm/csm/CSM.js';
 import { skyUniforms, sunTransmittance } from './sky';
-import { sharedUniforms } from './pipeline';
+import { sharedUniforms, LAYER_SHADOW_ONLY, LAYER_NEAR_DETAIL, LAYER_FAR_SHADOW } from './pipeline';
 import type { Quality } from '../core/settings';
 
 const _fwd = new THREE.Vector3();
@@ -28,12 +28,23 @@ export class Lighting {
 
   constructor(private scene: THREE.Scene, camera: THREE.PerspectiveCamera, q: Quality) {
     this.csm = new CSM({
-      maxFar: q.shadowFar, cascades: q.cascades, mode: 'practical', parent: scene, shadowMapSize: q.shadowSize,
+      maxFar: q.shadowFar, cascades: q.cascades, mode: 'custom', parent: scene, shadowMapSize: q.shadowSize,
+      // geometric splits from a tight ~28 m near cascade: crisp contact shadows up close, few casters per cascade
+      customSplitsCallback: (n: number, _near: number, far: number, out: number[]) => {
+        const first = Math.min(28, far / n), r = Math.pow(far / first, 1 / Math.max(1, n - 1));
+        for (let i = 0; i < n; i++) out.push(Math.min(1, (first * Math.pow(r, i)) / far));
+      },
       lightDirection: new THREE.Vector3(-1, -1, -1).normalize(), camera, lightIntensity: 3, lightNear: 1, lightFar: 6000, lightMargin: 600,
       shadowBias: -0.00012,
     });
     this.csm.fade = true;
-    for (const l of this.csm.lights) { l.shadow.normalBias = 0.04; l.shadow.radius = 1.5; l.shadow.camera.layers.enable(2); }
+    this.csm.lights.forEach((l, i) => {
+      l.shadow.normalBias = 0.04; l.shadow.radius = 1.5;
+      // shadow-only proxies everywhere; detailed building shells only in the near cascades, the far-box
+      // stand-ins only in the far ones (at that range a shell's shadow is its box)
+      l.shadow.camera.layers.enable(LAYER_SHADOW_ONLY);
+      if (i < 2) l.shadow.camera.layers.enable(LAYER_NEAR_DETAIL); else l.shadow.camera.layers.enable(LAYER_FAR_SHADOW);
+    });
   }
 
   /** Wire a lit material into CSM, chaining any existing onBeforeCompile. */

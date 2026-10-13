@@ -36,7 +36,7 @@ import { Ship } from './vehicles/ship';
 import { mulberry32 } from './core/noise';
 import type { Placed } from './world/towns';
 import { VERSION } from './version';
-import { frameStamp } from './creature/rig';
+import { frameStamp, flushBoneAtlas } from './creature/rig';
 
 export type Progress = (f: number, msg: string) => void;
 
@@ -83,7 +83,7 @@ class WantedPosters {
 
 export class Game {
   renderer: THREE.WebGLRenderer;
-  scene = new THREE.Scene();
+  scene = Object.assign(new THREE.Scene(), { matrixWorldAutoUpdate: false });
   camera: THREE.PerspectiveCamera;
   world = new World();
   q: Quality;
@@ -237,9 +237,6 @@ export class Game {
     this.player.onDeath = () => { this.deathCause = 'Your wounds were too much.'; setTimeout(() => this.ui.showDeath(), 1800); };
     this.physics.onStep((dt) => {
       this.player.step(dt);
-      this.fauna.step(dt);
-      this.residents.step(dt);
-      this.war.step(dt);
       this.interaction.stepHeld(dt);
       this.combat.step(dt);
       for (const c of this.carts) c.step(dt);
@@ -351,6 +348,13 @@ export class Game {
     if (!this.freeCam) this.player.look(dt);
     this.props.activators[0] = this.player.pos;
     this.props.updateActivity(dt);
+    // creatures are kinematic characters: their AI and controllers run once per frame (the fixed physics
+    // substeps below then carry them to their new poses); only dynamic bodies need the fixed-rate loop
+    const aiDt = Math.min(simDt, 0.1);
+    this.fauna.step(aiDt);
+    this.residents.step(aiDt);
+    this.war.step(aiDt);
+    this.mark('ai');
     this.physics.update(simDt);
     this.mark('physics');
     this.weather.update(dt);
@@ -524,6 +528,9 @@ export class Game {
     fu.uExposure.value = this.lighting.exposure * (1 + (this.lighting.flash ?? 0) * 3);
     fu.uHurt.value = this.player ? THREE.MathUtils.clamp(1 - this.player.totalHealth / 70, 0, 1) : 0;
     fu.uWetLens.value = this.weather && !this.lighting.interior ? this.weather.cur.rain : 0;
+    // one scene-graph update per frame (the opaque and water passes would each redo it), then skin once
+    this.scene.updateMatrixWorld();
+    flushBoneAtlas(this.renderer);
     this.pipeline.render();
     this.mark('r:submit');
     this.hud?.update();

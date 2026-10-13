@@ -25,7 +25,7 @@ export const QUALITY: Record<QualityName, Quality> = {
   low: { name: 'low', pixelRatio: 0.75, msaa: 0, shadowSize: 1024, cascades: 2, shadowFar: 260, shadowEvery: 2, cloudSteps: 16, godrays: false, bloom: false, grassRadius: 28, grassDensity: 14, treeDistance: 120, terrainRange: 70, waterSSR: false, furShells: 0, propDistance: 70 },
   medium: { name: 'medium', pixelRatio: 1, msaa: 2, shadowSize: 2048, cascades: 3, shadowFar: 700, shadowEvery: 1, cloudSteps: 24, godrays: false, bloom: true, grassRadius: 45, grassDensity: 26, treeDistance: 220, terrainRange: 100, waterSSR: true, furShells: 6, propDistance: 110 },
   high: { name: 'high', pixelRatio: 1, msaa: 4, shadowSize: 2048, cascades: 4, shadowFar: 1400, shadowEvery: 1, cloudSteps: 40, godrays: true, bloom: true, grassRadius: 70, grassDensity: 44, treeDistance: 360, terrainRange: 120, waterSSR: true, furShells: 12, propDistance: 160 },
-  ultra: { name: 'ultra', pixelRatio: 1, msaa: 4, shadowSize: 4096, cascades: 4, shadowFar: 2200, shadowEvery: 1, cloudSteps: 64, godrays: true, bloom: true, grassRadius: 95, grassDensity: 70, treeDistance: 520, terrainRange: 150, waterSSR: true, furShells: 18, propDistance: 220 },
+  ultra: { name: 'ultra', pixelRatio: 1, msaa: 4, shadowSize: 2048, cascades: 4, shadowFar: 2200, shadowEvery: 1, cloudSteps: 64, godrays: true, bloom: true, grassRadius: 95, grassDensity: 70, treeDistance: 520, terrainRange: 150, waterSSR: true, furShells: 18, propDistance: 220 },
 };
 
 export interface Settings {

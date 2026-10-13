@@ -3,7 +3,7 @@ import { launch, openPage, serve } from './harness.mjs';
 const srv = await serve();
 const browser = await launch();
 const { page } = await openPage(browser, `http://127.0.0.1:${srv.address().port}/?test&quality=${process.argv[2] || 'ultra'}`, { width: 1920, height: 1080 });
-await page.evaluate(() => { SC.game.manual = true; SC.setTime(11); SC.teleport(-1250 + 8, 350 + 10); SC.stream(-1250, 350); SC.advance(3); });
+await page.evaluate(() => { SC.game.manual = true; SC.setTime(11); SC.teleport(-1250 + 8, 350 + 10); SC.stream(-1250, 350); SC.advance(3); for (let i = 0; i < 90; i++) { SC.game.step(1 / 60); SC.game.renderFrame(); } });
 const cdp = await page.createCDPSession();
 await cdp.send('Profiler.enable'); await cdp.send('Profiler.setSamplingInterval', { interval: 200 });
 await cdp.send('Profiler.start');

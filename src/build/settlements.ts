@@ -9,6 +9,7 @@ import { generateBuilding, type BuildingModel } from './building';
 import { buildWalls, buildBridge, buildDock, fenceRect, well, stall, haystack, lampPost, type StructModel } from './structures';
 import { GeoBuilder } from './geom';
 import { BatchPool, type BatchHandle } from '../render/batch';
+import { LAYER_NEAR_DETAIL, LAYER_FAR_SHADOW } from '../render/pipeline';
 import { material, meshesFrom } from '../props/palette';
 import { furnish } from '../props/interior';
 import { FurnitureNode, type MovableNode } from '../props/furnish';
@@ -35,7 +36,8 @@ export class Door {
     for (const y of [0.35, h - 0.35]) g.box('iron', -hinge * 0.25, y, 0.035, 0.5, 0.05, 0.01, 2);
     g.push().translate(cx - hinge * (w / 2 - 0.12), 1.0, 0.045).rotateX(Math.PI / 2); g.cyl('iron', 0, 0, 0, 0.035, 0.035, 0.012, 12, false); g.pop();
     g.box('iron', cx - hinge * (w / 2 - 0.12), 1.0, 0.05, 0.02, 0.1, 0.02, 3);
-    for (const m of meshesFrom(g.build())) this.node.add(m);
+    this.geos = g.build();
+    for (const m of meshesFrom(this.geos)) this.node.add(m);
     this.node.position.copy(pos);
     this.node.rotation.y = yaw;
     // the hinge sits at one edge of the opening
@@ -51,7 +53,14 @@ export class Door {
   toggle() { if (this.locked) return false; this.target = this.target > 0.5 ? 0 : 1; this.autoClose = 0; return true; }
   /** seconds until an NPC-opened door swings shut (only once the doorway is clear) */
   autoClose = 0;
-  cast = true;
+  geos: Map<string, THREE.BufferGeometry>;
+  /** far, idle doors are drawn from the shared building batches instead of as their own meshes */
+  private batched: BatchHandle | null = null;
+  get idle() { return this.open === this.target && this.autoClose <= 0; }
+  setBatched(on: boolean, pool: BatchPool) {
+    if (on && !this.batched) { this.node.updateMatrixWorld(true); this.batched = pool.add(this.geos, this.node.children[0].matrixWorld); }
+    else if (!on && this.batched) { pool.remove(this.batched); this.batched = null; }
+  }
   update(dt: number, people?: THREE.Vector3[]) {
     if (this.autoClose > 0) {
       const dp = this.node.getWorldPosition(_tmpV);
@@ -66,7 +75,7 @@ export class Door {
     const q = this.node.children[0].getWorldQuaternion(new THREE.Quaternion());
     this.body.setNextKinematicRotation(q);
   }
-  dispose() { this.phys.removeBody(this.body); this.node.removeFromParent(); }
+  dispose(pool?: BatchPool) { if (pool) this.setBatched(false, pool); this.phys.removeBody(this.body); this.node.removeFromParent(); }
 }
 
 export interface LiveBuilding {
@@ -105,7 +114,8 @@ export class Settlements {
   constructor(public world: World, public phys: Physics, public scene: THREE.Scene, public props: PropManager, towns: Towns) {
     this.towns = towns;
     this.shells = new BatchPool((k) => material(k), (bm, k) => {
-      if (k.startsWith('glass') || k.startsWith('flame')) { bm.layers.set(1); bm.renderOrder = 5; bm.castShadow = false; bm.sortObjects = true; }
+      if (k.startsWith('glass') || k.startsWith('flame')) { bm.layers.set(1); bm.renderOrder = 5; bm.castShadow = false; }
+      else bm.layers.set(LAYER_NEAR_DETAIL);
     });
     scene.add(this.structures, this.lod, this.shells.group);
     this.structures.matrixAutoUpdate = false; this.lod.matrixAutoUpdate = false;
@@ -196,8 +206,22 @@ export class Settlements {
       m.customProgramCacheKey = () => 'lod-' + k + '-' + n;
       const mesh = new THREE.Mesh(geo, m);
       mesh.castShadow = true; mesh.receiveShadow = true; mesh.matrixAutoUpdate = false;
+      // near cascades: the box hides where the detailed shell stands, like in the view
+      const dm = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+      dm.onBeforeCompile = (sh) => {
+        sh.uniforms.tLodFlags = { value: flags };
+        sh.vertexShader = sh.vertexShader
+          .replace('#include <common>', `#include <common>\nattribute float aBid; uniform sampler2D tLodFlags;`)
+          .replace('#include <begin_vertex>', `#include <begin_vertex>\n if (texture2D(tLodFlags, vec2((aBid + 0.5) / ${n.toFixed(1)}, 0.5)).r > 0.5) transformed = vec3(0.0, -1e5, 0.0);`);
+      };
+      dm.customProgramCacheKey = () => 'lodd-' + n;
+      mesh.customDepthMaterial = dm;
       this.lod.add(mesh);
       meshes.push(mesh);
+      // far cascades: every building as its box, whatever is shown up close
+      const fs = new THREE.Mesh(geo, base);
+      fs.castShadow = true; fs.matrixAutoUpdate = false; fs.layers.set(LAYER_FAR_SHADOW);
+      this.lod.add(fs);
     }
     this.townLod.set(p.site.id, { meshes, flags, index });
   }
@@ -375,7 +399,7 @@ export class Settlements {
     this.candleState.set(b.id, live.furniture.flatMap((f) => f.candles.map((c) => c.burn)));
     for (const c of live.intColliders) this.phys.remove(c);
     live.intColliders = [];
-    live.doors = live.doors.filter((d) => { if (d.exterior) return true; d.dispose(); return false; });
+    live.doors = live.doors.filter((d) => { if (d.exterior) return true; d.dispose(this.shells); return false; });
     const interior = live.root.getObjectByName('interior')!;
     for (const c of [...interior.children]) {
       c.removeFromParent();
@@ -389,7 +413,7 @@ export class Settlements {
     const live = this.live.get(b.id);
     if (!live) return;
     this.unfurnish(live);
-    for (const d of live.doors) d.dispose();
+    for (const d of live.doors) d.dispose(this.shells);
     this.shells.remove(live.shell);
     this.phys.removeBody(live.body);
     live.root.removeFromParent();
@@ -414,14 +438,15 @@ export class Settlements {
           l.detailed = detailed;
           this.shells.setVisible(l.shell, detailed);
           this.setLodHidden(l.placed, detailed);
-          for (const dr of l.doors) dr.node.visible = detailed;
+        }
+        // doors up close (or swinging) are live objects; far idle ones join the batches at their current pose
+        for (const dr of l.doors) {
+          const live = l.detailed && (d < 30 + size * 0.5 || !dr.idle);
+          dr.node.visible = live;
+          dr.setBatched(l.detailed && !live && dr.exterior, this.shells);
         }
       }
-      const near = !!cam && l.root.position.distanceToSquared(cam) < 45 * 45;
-      for (const d of l.doors) {
-        d.update(dt, this.people);
-        if (cam && l.detailed) { const cast = near; if (d.cast !== cast) { d.cast = cast; d.node.traverse((o) => { (o as THREE.Mesh).castShadow = cast; }); } }
-      }
+      for (const d of l.doors) d.update(dt, this.people);
       if (l.furnished && dt > 0) for (const f of l.furniture) f.update(dt, hours, t);
     }
   }

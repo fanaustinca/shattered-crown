@@ -17,6 +17,10 @@ export const LAYER_OPAQUE = 0;
 export const LAYER_WATER = 1;
 /** objects that only render into shadow maps (cheap shadow proxies) */
 export const LAYER_SHADOW_ONLY = 2;
+/** detailed building shells: main view + near cascades only */
+export const LAYER_NEAR_DETAIL = 4;
+/** shadow-only stand-ins for the far cascades */
+export const LAYER_FAR_SHADOW = 5;
 
 export const sharedUniforms = {
   tSceneColor: { value: null as THREE.Texture | null },
@@ -308,6 +312,8 @@ export class Pipeline {
   frame = 0;
   shadowsDirty = true;
   stats = { calls: 0, tris: 0 };
+  /** smoothed CPU ms of the opaque and water passes */
+  cpu = { opaque: 0, water: 0 };
 
   constructor(public renderer: THREE.WebGLRenderer, public scene: THREE.Scene, public camera: THREE.PerspectiveCamera, public q: Quality) {
     sharedUniforms.tNoise.value = makeNoiseTexture(256);
@@ -356,15 +362,17 @@ export class Pipeline {
   render(beforeWater?: () => void) {
     const r = this.renderer, cam = this.camera, scene = this.scene;
     this.frame++;
+    const t0 = performance.now();
     r.info.autoReset = false; r.info.reset();
     sharedUniforms.uCamNear.value = cam.near; sharedUniforms.uCamFar.value = cam.far;
     // 1. opaque
     r.shadowMap.needsUpdate = this.shadowsDirty || this.frame % this.q.shadowEvery === 0;
-    cam.layers.set(LAYER_OPAQUE);
+    cam.layers.set(LAYER_OPAQUE); cam.layers.enable(LAYER_NEAR_DETAIL);
     r.setRenderTarget(this.rtMain);
     r.setClearColor(0x000000, 1);
     r.clear(true, true, true);
     r.render(scene, cam);
+    const tA = performance.now();
     // 2. copies for refraction and depth-aware effects
     const cm = this.copy.material as THREE.ShaderMaterial;
     cm.uniforms.tColor.value = this.rtMain.texture;
@@ -379,9 +387,11 @@ export class Pipeline {
     cam.layers.set(LAYER_WATER);
     r.setRenderTarget(this.rtMain);
     scene.background = null;
+    const tB = performance.now();
     r.render(scene, cam);
     r.autoClear = ac;
-    cam.layers.set(LAYER_OPAQUE);
+    this.cpu.opaque = this.cpu.opaque * 0.9 + (tA - t0) * 0.1; this.cpu.water = this.cpu.water * 0.9 + (performance.now() - tB) * 0.1;
+    cam.layers.set(LAYER_OPAQUE); cam.layers.enable(LAYER_NEAR_DETAIL);
     this.stats.calls = r.info.render.calls; this.stats.tris = r.info.render.triangles;
     // 4. atmosphere
     const u = this.atmoMat.uniforms;

@@ -1,0 +1,17 @@
+import { launch } from './harness.mjs';
+const browser = await launch();
+const page = await browser.newPage();
+await page.setViewport({ width: 1366, height: 768 });
+const errors = [];
+page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errors.push(m.type() + ' ' + m.text()); });
+page.on('pageerror', (e) => errors.push('pageerror ' + e.message));
+await page.goto(process.argv[2] || 'https://fanaustinca.github.io/shattered-crown/', { waitUntil: 'domcontentloaded' });
+await page.waitForSelector('.title .go', { timeout: 240000 });
+await new Promise((r) => setTimeout(r, 1500));
+await page.screenshot({ path: 'tests/screenshots/live-title.png' });
+await page.click('.title .go');
+await new Promise((r) => setTimeout(r, 4000));
+await page.screenshot({ path: 'tests/screenshots/live-after.png' });
+console.log(await page.evaluate(() => JSON.stringify({ freeCam: SC.game.freeCam, started: SC.game.started, screen: SC.game.ui.screen, title: !!document.querySelector('.title') })));
+console.log(errors.slice(0, 15).join('\n'));
+await browser.close();

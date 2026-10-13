@@ -143,7 +143,18 @@ export class UI {
       <div class="btns"><button class="go">Begin</button><button class="help">Controls & Help</button><button class="set">Settings</button></div>
       <div class="ver">v${VERSION} · ${DESIGN_COUNT} furniture designs · ${enumerateCatalog().length} variants · CC0 assets from Poly Haven</div>
     </div>`, 'titlepanel');
-    p.querySelector('.go')!.addEventListener('click', () => { this.game.audio.start(); this.close(); onBegin(); });
+    // starting must never depend on audio or pointer lock succeeding
+    let begun = false;
+    const begin = () => {
+      if (begun) return; begun = true;
+      window.removeEventListener('keydown', onKey);
+      try { onBegin(); } catch (e) { console.error(e); }
+      try { this.close(); } catch (e) { console.error(e); this.panel?.remove(); this.panel = null; this.screen = 'play'; this.game.paused = false; this.game.input.uiOpen = false; }
+      try { this.game.audio.start(); } catch (e) { console.error(e); }
+    };
+    const onKey = (e: KeyboardEvent) => { if (this.screen === 'title' && (e.code === 'Enter' || e.code === 'Space')) { e.preventDefault(); begin(); } };
+    window.addEventListener('keydown', onKey);
+    p.querySelector('.go')!.addEventListener('click', begin);
     p.querySelector('.help')!.addEventListener('click', () => this.openPause('help', true));
     p.querySelector('.set')!.addEventListener('click', () => this.openPause('settings', true));
   }

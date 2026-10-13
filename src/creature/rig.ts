@@ -36,15 +36,22 @@ THREE.Skeleton.prototype.update = function (this: THREE.Skeleton & { _gf?: numbe
 
 // ---- shared bone atlas ----
 // Every skeleton writes its bone matrices into one float texture, so the GPU gets a single upload per frame
-// instead of one small texture upload per character (each of which costs ~0.1 ms of driver time). The slot
-// offset rides in the otherwise-unused bottom row of each mesh's bindMatrix; the patched skinning chunks read it
-// and use a cleaned bind matrix, so every pass (colour, depth, shadow cascades) agrees.
-const ATLAS_W = 1024, ATLAS_ROWS = 64, BLOCK = 64;           // 256 matrices per row; slots in 64-bone blocks
+// instead of one small texture upload per character. The atlas is triple-buffered (the CPU never writes into a
+// texture an in-flight frame is still reading, which would stall the driver) and only the rows in use are sent.
+// The slot offset rides in the otherwise-unused bottom row of each mesh's bindMatrix; the patched skinning chunks
+// read it and use a cleaned bind matrix, so every pass (colour, depth, shadow cascades) agrees.
+const ATLAS_W = 1024, ATLAS_ROWS = 64, BLOCK = 48;           // 256 matrices per row
 const atlasData = new Float32Array(ATLAS_W * ATLAS_ROWS * 4);
-const atlas = new THREE.DataTexture(atlasData, ATLAS_W, ATLAS_ROWS, THREE.RGBAFormat, THREE.FloatType);
-atlas.needsUpdate = true;
+const ring = [0, 1, 2].map(() => {
+  const t = new THREE.DataTexture(atlasData, ATLAS_W, ATLAS_ROWS, THREE.RGBAFormat, THREE.FloatType);
+  t.version = 1;                                                      // uploaded once in full on first use
+  Object.defineProperty(t, 'needsUpdate', { get: () => false, set: () => { atlasDirty = true; } });
+  return t;
+});
+let atlasDirty = true, ringI = 0, maxEnd = 0;
+const atlasSkeletons = new Set<THREE.Skeleton>();
 const freeBlocks: number[] = [];
-for (let b = (ATLAS_W * ATLAS_ROWS) / 4 / BLOCK - 1; b >= 0; b--) freeBlocks.push(b * BLOCK);
+for (let b = Math.floor((ATLAS_W * ATLAS_ROWS) / 4 / BLOCK) - 1; b >= 0; b--) freeBlocks.push(b * BLOCK);
 THREE.ShaderChunk.skinning_pars_vertex = THREE.ShaderChunk.skinning_pars_vertex
   .replace('int j = int( i ) * 4;', 'int j = int( i + bindMatrix[ 0 ][ 3 ] ) * 4;')
   .replace('mat4 getBoneMatrix', 'mat4 cleanBind( mat4 m ) { m[ 0 ][ 3 ] = 0.0; return m; }\n\tmat4 getBoneMatrix');
@@ -56,18 +63,42 @@ function atlasBind(mesh: THREE.SkinnedMesh) {
   if (n > BLOCK || !freeBlocks.length) return;   // falls back to its own bone texture
   const slot = freeBlocks.pop()!;
   sk._slot = slot;
+  maxEnd = Math.max(maxEnd, slot + BLOCK);
   sk.boneMatrices = atlasData.subarray(slot * 16, (slot + n) * 16);
-  sk.boneTexture = atlas;
+  sk.boneTexture = ring[ringI];
+  atlasSkeletons.add(sk);
   mesh.bindMatrix.elements[3] = slot;
 }
 /** Return a creature's atlas slot (call when the creature is removed for good). */
 export function releaseRig(rig: Rig) {
   const sk = rig.mesh.skeleton as THREE.Skeleton & { _slot?: number };
-  if (sk._slot !== undefined) { freeBlocks.push(sk._slot); sk._slot = undefined; }
+  if (sk._slot !== undefined) {
+    freeBlocks.push(sk._slot); sk._slot = undefined; atlasSkeletons.delete(sk);
+    freeBlocks.sort((a, b) => b - a);            // keep handing out the lowest slots so the uploaded rows stay few
+  }
+}
+/** Once per frame, after animation and before rendering: send the used rows to the next ring texture. */
+export function flushBoneAtlas(renderer: THREE.WebGLRenderer) {
+  // bones must already have this frame's world matrices (the game updates the scene graph once per frame)
+  for (const sk of atlasSkeletons) sk.update();
+  if (!atlasDirty) return;
+  atlasDirty = false;
+  ringI = (ringI + 1) % ring.length;
+  const tex = ring[ringI];
+  const props = renderer.properties.get(tex) as { __webglTexture?: WebGLTexture };
+  if (!props.__webglTexture) renderer.initTexture(tex);
+  else {
+    const gl = renderer.getContext() as WebGL2RenderingContext;
+    const rows = Math.min(ATLAS_ROWS, Math.ceil((maxEnd * 4) / ATLAS_W));
+    renderer.state.bindTexture(gl.TEXTURE_2D, props.__webglTexture);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, ATLAS_W, rows, gl.RGBA, gl.FLOAT, atlasData, 0);
+  }
+  for (const sk of atlasSkeletons) sk.boneTexture = tex;
 }
 // the atlas is shared: never dispose it with a skeleton
 const _skelDispose = THREE.Skeleton.prototype.dispose;
-THREE.Skeleton.prototype.dispose = function (this: THREE.Skeleton & { _slot?: number }) { if (this.boneTexture === atlas) { this.boneTexture = null; return; } _skelDispose.call(this); };
+THREE.Skeleton.prototype.dispose = function (this: THREE.Skeleton & { _slot?: number }) { if (ring.includes(this.boneTexture as THREE.DataTexture)) { this.boneTexture = null; return; } _skelDispose.call(this); };
 
 /** Animation LOD: full rate up close, every 2nd frame at mid range, every 4th far away (with the elapsed time
  *  accumulated, so motion speed is unchanged). Skipped frames also skip the bone matrix walk and upload. */

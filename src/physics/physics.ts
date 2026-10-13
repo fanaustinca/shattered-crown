@@ -44,6 +44,15 @@ export class Physics {
   onStep(fn: (dt: number) => void) { this.stepHooks.push(fn); }
   onPostStep(fn: (dt: number) => void) { this.postHooks.push(fn); }
 
+  /** World.step() re-walks every collider and body through the JS bridge after each step to map ones the
+   *  pipeline created itself (it never creates any here); with tens of thousands of static colliders that costs
+   *  ~2 ms per substep. Step the pipeline directly; creation/removal through the World API stays mapped. */
+  private rawStep() {
+    const w = this.world as unknown as Record<string, { step?: (...a: unknown[]) => void }> & { physicsPipeline?: { step: (...a: unknown[]) => void } };
+    const pp = w.physicsPipeline;
+    if (!pp) { this.world.step(this.events); return; }
+    pp.step(w.gravity, w.integrationParameters, w.islands, w.broadPhase, w.narrowPhase, w.bodies, w.colliders, w.softBodies, w.impulseJoints, w.multibodyJoints, w.ccdSolver, this.events, undefined);
+  }
   /** Advance with a fixed timestep; returns the number of substeps taken. */
   update(frameDt: number) {
     this.acc += Math.min(frameDt, 0.1);
@@ -51,7 +60,7 @@ export class Physics {
     while (this.acc >= this.dt && n < 4) {
       for (const h of this.stepHooks) h(this.dt);
       this.world.timestep = this.dt;
-      this.world.step(this.events);
+      this.rawStep();
       this.drainEvents();
       for (const h of this.postHooks) h(this.dt);
       this.acc -= this.dt; n++; this.steps++;

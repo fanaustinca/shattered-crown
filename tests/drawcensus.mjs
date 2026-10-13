@@ -9,8 +9,7 @@ const r = await page.evaluate((where) => {
   if (where === 'millbrook') { SC.teleport(-620 + 6, 940 + 6); SC.stream(-620, 940); SC.advance(3); }
   else if (where === 'aurel') { SC.teleport(-1250 + 8, 350 + 10); SC.stream(-1250, 350); SC.advance(3); }
   else if (where === 'plains') SC.view(-900, 'g+1.7', 300, -800, 'g+1.5', 250);
-  for (let i = 0; i < 4; i++) g.renderFrame();
-  g.lighting.forceShadows = true;
+  for (let i = 0; i < 30; i++) { g.step(1/60); g.renderFrame(); }
   const r = g.renderer, orig = r.renderBufferDirect.bind(r), out = {};
   const hint = (o) => { let p = o; while (p.parent && p.parent !== g.scene) p = p.parent; return p === g.props.group ? 'props' : p === g.settlements.structures ? 'structures' : p === g.settlements.lod ? 'lod' : p.name === 'batches' ? 'batches' : [...g.settlements.live.values()].some((l) => l.root === p) ? 'building' : (p.name || p.type) + '/' + (p.children[0]?.type ?? '') + '#' + g.scene.children.indexOf(p) + ':' + (o.name || o.geometry?.type || '') + ':' + (o.material?.name || o.material?.type || ''); };
   let shadow = false;

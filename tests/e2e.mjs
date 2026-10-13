@@ -58,6 +58,18 @@ await test('renders without GL errors', async () => {
   assert(bad.length === 0, bad.slice(0, 5).join('\n'));
 });
 
+await test('title screen Begin hands control to the player', async () => {
+  const { page: p2, errors: e2 } = await openPage(browser, `http://127.0.0.1:${port}/?quality=low`, { width: 640, height: 360 });
+  await p2.waitForSelector('.title .go', { timeout: 120000 });
+  await p2.click('.title .go');
+  await new Promise((r) => setTimeout(r, 2500));
+  const st = await p2.evaluate(() => ({ freeCam: SC.game.freeCam, started: SC.game.started, screen: SC.game.ui.screen, title: !!document.querySelector('.title') }));
+  assert(st.started && !st.freeCam && st.screen === 'play' && !st.title, JSON.stringify(st));
+  const bad = e2.filter((e) => !/favicon|AudioContext|Failed to load resource|pointer ?lock/i.test(e));
+  assert(bad.length === 0, bad.slice(0, 3).join('\n'));
+  await p2.close();
+});
+
 await browser.close();
 srv.close();
 process.exit(summary() ? 1 : 0);
