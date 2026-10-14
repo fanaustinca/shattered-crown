@@ -14,7 +14,12 @@ export const WAVES: [number, number, number, number][] = [
   [1.0, 0.3, 0.16, 38], [0.7, -0.7, 0.13, 23], [-0.25, 1.0, 0.12, 15], [0.9, 0.45, 0.10, 9.5], [-0.6, 0.8, 0.08, 6.1], [0.2, -1.0, 0.06, 3.7],
 ];
 
+// Long ocean swell: built up by the wind over open water, it only reaches full height well offshore (deep
+// water), and is what makes a big ship pitch and roll. Same format as WAVES.
+export const SWELLS: [number, number, number, number][] = [[1.0, 0.12, 0.07, 150], [0.75, 0.66, 0.055, 96], [0.95, -0.3, 0.045, 62]];
+
 export const waterUniforms = {
+  uSwell: { value: 0.3 },        // swell height (wind strength and duration)
   uWaveAmp: { value: 0.7 },      // overall sea state (weather)
   uWaveRot: { value: 0 },        // the swell turns to run with the wind
   tWaterNormal: { value: null as THREE.Texture | null },
@@ -22,15 +27,24 @@ export const waterUniforms = {
 };
 
 /** CPU evaluation of the sea surface height (for buoyancy), matching the shader. */
+let seaFloor: ((x: number, z: number) => number) | null = null;
+/** The game tells the sea how deep it is (waves shoal and die on the beach; swells need open water). */
+export function setSeaFloor(fn: (x: number, z: number) => number) { seaFloor = fn; }
+const ss = (a: number, b: number, x: number) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 export function seaHeight(x: number, z: number, t: number, amp: number, rot = waterUniforms.uWaveRot.value): number {
   // Gerstner: approximate height at (x,z) ignoring the small horizontal displacement
   let y = 0;
   const cr = Math.cos(rot), sr = Math.sin(rot);
-  for (const [dx0, dz0, st, L] of WAVES) {
-    const dx = dx0 * cr - dz0 * sr, dz = dx0 * sr + dz0 * cr;
-    const l = Math.hypot(dx, dz), k = (2 * Math.PI) / L, c = Math.sqrt(9.8 / k);
-    const a = (st / k) * amp;
-    y += a * Math.sin(k * ((dx / l) * x + (dz / l) * z) - c * k * t * 1.0);
+  const depth = seaFloor ? Math.max(0, -seaFloor(x, z)) : 50;
+  const wind = amp * ss(0, 7, depth), swell = waterUniforms.uSwell.value * ss(6, 60, depth);
+  for (const [set, A] of [[WAVES, wind], [SWELLS, swell]] as const) {
+    if (A <= 0) continue;
+    for (const [dx0, dz0, st, L] of set) {
+      const dx = dx0 * cr - dz0 * sr, dz = dx0 * sr + dz0 * cr;
+      const l = Math.hypot(dx, dz), k = (2 * Math.PI) / L, c = Math.sqrt(9.8 / k);
+      const a = (st / k) * A;
+      y += a * Math.sin(k * ((dx / l) * x + (dz / l) * z) - c * k * t * 1.0);
+    }
   }
   return y;
 }
@@ -71,7 +85,7 @@ function makeNormalTexture(size = 256): THREE.DataTexture {
 }
 
 const VERT = /* glsl */ `
-uniform float uTime, uWaveAmp, uWaveRot;
+uniform float uTime, uWaveAmp, uWaveRot, uSwell;
 uniform vec2 uWind;
 attribute float aKind;      // 0 sea, 1 river, 2 lake
 attribute vec2 aFlow;       // river flow direction * speed
@@ -84,6 +98,8 @@ varying vec4 vClip;
 ${TERRAIN_HEIGHT_GLSL}
 const int NW = ${WAVES.length};
 const vec4 WV[NW] = vec4[NW](${WAVES.map((w) => `vec4(${w.map((v) => v.toFixed(3)).join(',')})`).join(',')});
+const int NS = ${SWELLS.length};
+const vec4 SV[NS] = vec4[NS](${SWELLS.map((w) => `vec4(${w.map((v) => v.toFixed(3)).join(',')})`).join(',')});
 void main() {
   vec3 p = (modelMatrix * vec4(position, 1.0)).xyz;
   vKind = aKind;
@@ -105,6 +121,19 @@ void main() {
       tx += vec3(-d.x * d.x * WV[i].z * amp * s * 0.8, d.x * WV[i].z * amp * co, -d.x * d.y * WV[i].z * amp * s * 0.8);
       tz += vec3(-d.x * d.y * WV[i].z * amp * s * 0.8, d.y * WV[i].z * amp * co, -d.y * d.y * WV[i].z * amp * s * 0.8);
       vCrest += max(0.0, s) * WV[i].z * amp;
+    }
+    // the long swell, building offshore
+    float sa = uSwell * smoothstep(6.0, 60.0, depth) * (1.0 - smoothstep(3000.0, 9000.0, dist));
+    if (sa > 0.001) for (int i = 0; i < NS; i++) {
+      vec2 d = mat2(cos(uWaveRot), sin(uWaveRot), -sin(uWaveRot), cos(uWaveRot)) * normalize(SV[i].xy);
+      float k = 6.2831853 / SV[i].w, c = sqrt(9.8 / k);
+      float a = SV[i].z / k * sa;
+      float f = k * (dot(d, p.xz) - c * uTime);
+      float s = sin(f), co = cos(f);
+      disp += vec3(d.x * a * co, a * s, d.y * a * co) * vec3(0.8, 1.0, 0.8);
+      tx += vec3(-d.x * d.x * SV[i].z * sa * s * 0.8, d.x * SV[i].z * sa * co, -d.x * d.y * SV[i].z * sa * s * 0.8);
+      tz += vec3(-d.x * d.y * SV[i].z * sa * s * 0.8, d.y * SV[i].z * sa * co, -d.y * d.y * SV[i].z * sa * s * 0.8);
+      vCrest += max(0.0, s) * SV[i].z * sa * 0.6;
     }
     p += disp;
     n = normalize(cross(tz, tx));

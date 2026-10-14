@@ -68,6 +68,11 @@ export class PropManager {
   onBreak: ((p: Prop, at: THREE.Vector3) => void) | null = null;
   onImpact: ((p: Prop, speed: number, at: THREE.Vector3) => void) | null = null;
   coldAt: (p: THREE.Vector3) => boolean = () => false;
+  /** water surface height at (x,z) or -Infinity where there is none (set by the game: rivers, lakes, the sea) */
+  waterAt: ((x: number, z: number) => number) | null = null;
+  /** river current at (x,z) */
+  currentAt: ((x: number, z: number) => [number, number]) | null = null;
+  onSplash: ((p: Prop, at: THREE.Vector3, speed: number) => void) | null = null;
   constructor(public phys: Physics, public scene: THREE.Scene, public ground: (x: number, z: number) => number) {
     scene.add(this.group);
   }
@@ -262,6 +267,9 @@ export class PropManager {
         p.body.setTranslation({ x: p.obj.position.x, y: gy, z: p.obj.position.z }, true);
         p.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
       }
+      // water: everything gets buoyancy from the water it displaces. Wood, food, baskets and barrels float and
+      // bob on the waves and drift with the current; iron and stone still sink, only more slowly
+      if (this.waterAt && !p.held) this.buoyancy(p, dt);
       // resting inside an open container -> ride along with it
       if (!p.held && p.prevVel.lengthSq() < 0.05 && !p.body.isSleeping()) p.restT += dt; else if (p.prevVel.lengthSq() >= 0.05) p.restT = 0;
       if (p.restT > 0.4 && !p.held && p.def.mass < 40) {
@@ -295,6 +303,35 @@ export class PropManager {
       if (s.t > 240) { s.mesh.removeFromParent(); this.spills.splice(i, 1); }
     }
     void tmpQ;
+  }
+  private buoyancy(p: Prop, dt: number) {
+    const b = p.body!, pos = p.obj.position;
+    const wl = this.waterAt!(pos.x, pos.z);
+    const bb = p.bbox, h = Math.max(0.04, bb.max.y - bb.min.y);
+    const half = h / 2;
+    const sub = THREE.MathUtils.clamp((wl - (pos.y - half)) / h, 0, 1);
+    const was = (p as Prop & { wet?: number }).wet ?? 0;
+    (p as Prop & { wet?: number }).wet = sub;
+    if (sub <= 0) return;
+    if (was <= 0 && p.prevVel.y < -1.5) this.onSplash?.(p, new THREE.Vector3(pos.x, wl, pos.z), -p.prevVel.y);
+    const size = new THREE.Vector3(); bb.getSize(size);
+    // displaced volume: the bounding box times how full the shape is (round things fill ~half their box)
+    const fill = p.def.shape === 'ball' ? 0.52 : p.def.shape === 'cyl' ? 0.78 : p.def.shape === 'box' ? 0.9 : 0.6;
+    let vol = size.x * size.y * size.z * fill;
+    // dense materials: metal and stone sink no matter their size
+    const metal = p.def.kind === 'weapon' || p.def.material === 'metal' || /iron|metal|cannonball|silver|coin/.test(p.def.id);
+    if (metal) vol = Math.min(vol, p.mass / 7800);
+    const lift = Math.min(vol * 1000 * sub, p.mass * 6) * 9.81;
+    b.applyImpulse({ x: 0, y: lift * dt, z: 0 }, true);
+    // water drag (much more than air) and the river's flow
+    const lv = b.linvel(), av = b.angvel();
+    const k = Math.min(1, dt * (2.5 + 4 * sub));
+    let cx = 0, cz = 0;
+    if (this.currentAt) [cx, cz] = this.currentAt(pos.x, pos.z);
+    b.setLinvel({ x: lv.x + (cx * 0.9 - lv.x) * k * 0.6, y: lv.y * (1 - k * 0.8), z: lv.z + (cz * 0.9 - lv.z) * k * 0.6 }, true);
+    b.setAngvel({ x: av.x * (1 - k), y: av.y * (1 - k * 0.5), z: av.z * (1 - k) }, true);
+    // floating things never fall asleep mid-river
+    if (lift > p.mass * 9.81 * 0.9) b.wakeUp();
   }
   private insideOpen(c: Prop, worldPos: THREE.Vector3) {
     const local = c.obj.worldToLocal(worldPos.clone());

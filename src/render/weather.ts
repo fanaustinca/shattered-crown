@@ -93,7 +93,7 @@ export class Weather {
   get raining() { return this.cur.rain > 0.2 && !this.coldHere(); }
   coldHere() { const p = this.game.player.pos; return this.game.world.heightAt(p.x, p.z) > 190 || (this.game.world.eastAt(p.x, p.z) > 0.6 && this.game.world.heightAt(p.x, p.z) > 120); }
 
-  set(kind: WeatherKind, instant = false) { this.next = kind; this.kind = kind; this.timer = 300 + Math.random() * 600; if (instant) this.cur = { ...PROFILE[kind] }; }
+  set(kind: WeatherKind, instant = false) { this.next = kind; this.kind = kind; this.timer = 300 + Math.random() * 600; if (instant) { this.cur = { ...PROFILE[kind] }; const wd = this.cur.wind; waterUniforms.uSwell.value = Math.min(3.2, 0.2 + wd * 0.55 + wd * wd * 0.3); } }
   /** Fronts come and go: pick a starting sky so every session doesn't open on the same weather. */
   randomize() {
     const r = Math.random();
@@ -127,7 +127,10 @@ export class Weather {
     sharedUniforms.uRain.value = this.cur.rain;
     sharedUniforms.uSnow.value = this.snowCover;
     // sea state follows the wind: a gentle swell in fair weather, steep running seas in a storm
-    waterUniforms.uWaveAmp.value = Math.min(2.8, 0.35 + w * 0.5 + w * w * 0.32 + this.cur.rain * 0.25);
+    waterUniforms.uWaveAmp.value = Math.min(3.0, 0.35 + w * 0.55 + w * w * 0.36 + this.cur.rain * 0.25);
+    // the offshore swell builds and dies slowly (minutes) as the wind blows over open water
+    const swellT = Math.min(3.2, 0.2 + this.cur.wind * 0.55 + this.cur.wind * this.cur.wind * 0.3);
+    waterUniforms.uSwell.value += (swellT - waterUniforms.uSwell.value) * Math.min(1, dt * 0.02);
     waterUniforms.uWaveRot.value = this.windDir - Math.atan2(0.3, 1.0);
     g.overcast = this.cur.overcast;
     const au = g.pipeline.atmoUniforms;

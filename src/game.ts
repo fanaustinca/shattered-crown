@@ -7,7 +7,7 @@ import { Lighting } from './render/lighting';
 import { Terrain } from './render/terrain';
 import { Grass, sunDirRef } from './render/grass';
 import { Trees } from './render/trees';
-import { Water } from './render/water';
+import { Water, setSeaFloor, seaHeight, riverChop, waterUniforms } from './render/water';
 import { QUALITY, settings, saveSettings, guessQuality, type Quality } from './core/settings';
 import { Physics, groups, G_STATIC, G_VEHICLE } from './physics/physics';
 import { Input } from './core/input';
@@ -207,6 +207,9 @@ export class Game {
     this.props = new PropManager(this.physics, this.scene, (x, z) => this.groundAt(x, z));
     this.props.prep = (o) => this.lighting.prepObject(o);
     this.props.onImpact = (p, speed, at) => this.audio.play(p.def.breakable ? 'impact:ceramic' : p.def.kind === 'weapon' || p.def.id.includes('metal') ? 'impact:metal' : p.def.mass < 0.6 ? 'impact:soft' : 'impact:wood', at, Math.min(1, speed / 6));
+    this.props.waterAt = (x, z) => { const wl = this.world.waterLevelAt(x, z); if (wl !== 0) return wl + riverChop(x, z, this.time, waterUniforms.uWaveAmp.value); return this.world.heightAt(x, z) < 0.5 ? seaHeight(x, z, this.time, waterUniforms.uWaveAmp.value) : -Infinity; };
+    this.props.currentAt = (x, z) => this.world.currentAt(x, z);
+    this.props.onSplash = (_p, at, sp) => { this.particles.emit('splash', at, Math.min(14, 3 + Math.round(sp * 2))); this.audio.play('splash', at, Math.min(1, 0.2 + sp * 0.12)); };
     this.props.onBreak = (_p, at) => { this.audio.play('shatter', at, 1); this.particles.emit('dust', at, 6); };
     progress(0.94, 'Carving furniture');
     await this.props.preloadAll();
@@ -238,6 +241,7 @@ export class Game {
     this.playerBody = new PlayerBody(this);
     this.combat = new Combat(this);
     this.weather = new Weather(this);
+    setSeaFloor((x, z) => this.world.heightAt(x, z));
     this.music.moodHint = () => {
       const p = this.player.pos, h = this.hours, w = this.weather.cur;
       if (this.battleNear) return 'battle';
