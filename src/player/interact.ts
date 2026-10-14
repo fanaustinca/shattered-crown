@@ -83,7 +83,8 @@ export class Interaction {
           this.targetName = this.propLabel(pr);
           if (!this.held) {
             if (pr.def.mass <= 60) add({ key: 'E', label: pr.def.mass > 25 ? 'Drag' : 'Pick up', run: () => this.grab(pr) });
-            if (this.canStash(pr)) add({ key: 'F', label: 'Take', run: () => this.stash(pr) });
+            if (pr.price && pr.owner && pr.owner !== 'player') add({ key: 'R', label: `Buy (${pr.price}d)`, run: () => this.buy(pr) });
+            if (this.canStash(pr)) add({ key: 'F', label: pr.price && pr.owner !== 'player' ? 'Take (steal)' : 'Take', run: () => this.stash(pr) });
             if (pr.def.food) add({ key: 'Q', label: 'Eat', run: () => this.eatProp(pr) });
             if (pr.container && !pr.container.open) add({ key: 'X', label: 'Open', run: () => this.openPropContainer(pr) });
             if (pr.def.id === 'powder') add({ key: 'X', label: 'Light the fuse', run: () => g.destruct.light(pr) });
@@ -172,13 +173,24 @@ export class Interaction {
     if (pr.def.food) s += ` · ${freshLabel(pr.freshness)}`;
     if (pr.contents.length) s += ` · ${pr.contents.length} inside`;
     s += ` · ${pr.mass.toFixed(pr.mass < 2 ? 1 : 0)} kg`;
-    if (pr.owner && pr.owner !== 'player') s += ' · not yours';
+    if (pr.owner && pr.owner !== 'player') s += pr.price ? ` · for sale, ${pr.price} pennies (R to buy)` : ' · not yours';
     return s;
   }
   private nearestCandle(fn: FurnitureNode, point: THREE.Vector3): Candle | null {
     let best: Candle | null = null, bd = 0.7;
     for (const c of fn.candles) { const d = c.flameWorld.distanceTo(point); if (d < bd) { bd = d; best = c; } }
     return best;
+  }
+
+  /** Pay the stallholder or shopkeeper and the thing is yours. */
+  buy(pr: Prop) {
+    const g = this.game;
+    if (!pr.price) return;
+    if (this.money < pr.price) { g.hud.toast(`${pr.price} pennies — you only have ${this.money}.`); return; }
+    this.money -= pr.price;
+    g.hud.toast(`Bought ${pr.def.name.toLowerCase()} for ${pr.price} pennies.`);
+    pr.owner = 'player'; pr.price = null;
+    g.sound?.('pickup', pr.obj.position, 0.6);
   }
 
   // ---------- holding ----------

@@ -378,6 +378,35 @@ export class UI {
     window.addEventListener('keydown', onKey);
     show(node);
   }
+  /** A choice panel like a conversation, for things that aren't people (a travel post, a notice board). */
+  openChoice(title: string, sub: string, speaker: string, first: DNode) {
+    this.screen = 'dialogue';
+    const p = this.mount(`<div class="dlg"><h2>${title} <small>${sub}</small></h2><div class="log"></div><div class="opts"></div><p class="dim">1–9 to choose · Esc to leave</p></div>`, 'dlgpanel');
+    const log = p.querySelector('.log') as HTMLElement, opts = p.querySelector('.opts') as HTMLElement;
+    const add = (who: string, text: string, me = false) => { log.insertAdjacentHTML('beforeend', `<div class="${me ? 'me' : 'them'}"><b>${who}:</b> ${text}</div>`); while (log.children.length > 14) log.firstElementChild!.remove(); log.scrollTop = log.scrollHeight; };
+    let node = first;
+    const show = (d: DNode) => {
+      node = d; add(speaker, d.line);
+      opts.innerHTML = d.options.map((o, i) => `<button data-i="${i}"><kbd>${i + 1}</kbd> ${o.label}</button>`).join('');
+      opts.querySelectorAll('button').forEach((bt) => bt.addEventListener('click', () => choose(+(bt as HTMLElement).dataset.i!)));
+    };
+    const choose = (i: number) => {
+      const o = node.options[i];
+      if (!o) return;
+      add('You', o.label, true);
+      const next = o.go();
+      if (this.screen !== 'dialogue') { window.removeEventListener('keydown', onKey); return; }
+      if (!next) { window.removeEventListener('keydown', onKey); this.close(); return; }
+      show(next);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (this.screen !== 'dialogue') { window.removeEventListener('keydown', onKey); return; }
+      const m = /^Digit([1-9])$/.exec(e.code);
+      if (m) { e.preventDefault(); choose(+m[1] - 1); }
+    };
+    window.addEventListener('keydown', onKey);
+    show(first);
+  }
   openTrade(n: NPC) {
     const g = this.game, ia = g.interaction;
     this.screen = 'trade';

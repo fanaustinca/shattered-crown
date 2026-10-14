@@ -93,6 +93,15 @@ export function generateBuilding(spec: BuildingSpec): BuildingModel {
     { side: 'e', len: d, m: new THREE.Matrix4().makeTranslation(w / 2, 0, d / 2).multiply(new THREE.Matrix4().makeRotationY(Math.PI / 2)) },
     { side: 'w', len: d, m: new THREE.Matrix4().makeTranslation(-w / 2, 0, -d / 2).multiply(new THREE.Matrix4().makeRotationY(-Math.PI / 2)) },
   ];
+  // corner posts: the four walls meet at their centre lines, which left a square notch open at every outside
+  // corner (you could see into the house through it). A full-height post closes each one; on framed
+  // houses it is the timber corner post, elsewhere the wall material, like quoins.
+  const framed = spec.style === 'timber' || spec.style === 'plaster';
+  for (const [cx, cz] of [[-w / 2, -d / 2], [w / 2, -d / 2], [-w / 2, d / 2], [w / 2, d / 2]]) for (let f = 0; f < floors; f++) {
+    const y0 = PLINTH + f * fh;
+    ext.box(f === 0 ? M.ground : M.wallOut, cx, y0 + fh / 2, cz, T + 0.02, fh, T + 0.02, 0.6);
+    if (framed && (f > 0 || spec.style === 'plaster' || spec.kingdom !== 'ironreach')) ext.box(M.frame, cx, y0 + fh / 2, cz, T + 0.1, fh + 0.01, T + 0.1, 2);
+  }
   const stairSide = r() < 0.5 ? -1 : 1;   // stairs along the west (-1) or east (+1) inside wall
   const hearthSide: 'e' | 'w' = stairSide < 0 ? 'e' : 'w';
   for (const S of sides) {
@@ -313,8 +322,8 @@ export function generateBuilding(spec: BuildingSpec): BuildingModel {
       room(kind, f, Math.max(split, X0), X1, Z0, Z1);
     } else room(spec.type === 'barracks' ? 'dorm' : 'bedroom', f, X0, X1, Z0, Z1);
   }
-  // attic rooms in tall roofs
-  if (ridgeH > 2.4 && !big) room('storage', floors, X0 + 0.5, X1 - 0.5, -0.8, 0.8);
+  // (no attic rooms: there is no garret floor or ladder up into the roof, and goods stored there ended up
+  // tumbling down the roof slopes)
   model.rooms.forEach((rm) => { (rm as Room & { stairX: number; stairZ0: number; stairZ1: number; stairW: number; hearth: string }).stairX = stairX; Object.assign(rm, { stairZ0, stairZ1, stairW, hearthSide, hasHearth }); });
   return model;
 }

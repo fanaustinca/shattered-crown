@@ -1,7 +1,7 @@
 // Furnishing rules: each room kind gets a layout of furniture against walls and in the middle,
 // avoiding doors, stairs, the hearth and each other. Wealth picks finer woods and fabrics.
 import * as THREE from 'three';
-import type { Room, BuildingModel } from '../build/building';
+import type { Room, BuildingModel, RoomKind } from '../build/building';
 import { makeFurniture, modsFor, CATALOG, type Category, type FurnitureModel, type Mods } from './furniture';
 import { mulberry32 } from '../core/noise';
 
@@ -130,18 +130,31 @@ export function furnish(model: BuildingModel, seed: number): { furniture: Placem
       case 'common': case 'kitchen': {
         const tbl = tryPlace('table', rm.kind === 'kitchen' ? pick(['kitchen', 'trestle', 'workbench']) : pick(['trestle', 'square', 'round', 'refectory', 'gateleg', 'tavern']), mods(), false, 0.7);
         if (tbl) {
-          // chairs/benches around the table
-          const n = 2 + Math.floor(r() * 3);
-          for (let i = 0; i < n; i++) {
-            const a = (i / n) * Math.PI * 2 + 0.3;
-            const cd = Math.max(tbl.model.size.x, tbl.model.size.z) / 2 + 0.35;
+          // chairs drawn up square to the table's sides: along both long sides of a long table, one to a
+          // side of a square or round one; each faces the table, a little pulled out or askew
+          const rot = Math.abs(Math.sin(tbl.yaw)) > 0.5;
+          const hx = (rot ? tbl.model.size.z : tbl.model.size.x) / 2, hz = (rot ? tbl.model.size.x : tbl.model.size.z) / 2;
+          const L = Math.max(hx, hz), S = Math.min(hx, hz), alongX = hx >= hz;
+          const seats: [number, number, number][] = [];
+          const perSide = L - S < 0.25 ? 1 : Math.max(1, Math.min(3, Math.floor((2 * L) / 0.62)));
+          for (let k = 0; k < perSide; k++) for (const sd of [-1, 1]) {
+            const al = perSide === 1 ? 0 : ((k + 0.5) / perSide) * 2 * L - L, off = S + 0.36;
+            seats.push(alongX ? [tbl.pos.x + al, tbl.pos.z + sd * off, sd > 0 ? Math.PI : 0] : [tbl.pos.x + sd * off, tbl.pos.z + al, sd > 0 ? -Math.PI / 2 : Math.PI / 2]);
+          }
+          // the ends (the head of a long table, the other two sides of a square one)
+          for (const sd of [-1, 1]) { const off = L + 0.36; seats.push(alongX ? [tbl.pos.x + sd * off, tbl.pos.z, sd > 0 ? -Math.PI / 2 : Math.PI / 2] : [tbl.pos.x, tbl.pos.z + sd * off, sd > 0 ? Math.PI : 0]); }
+          const n = Math.min(seats.length, 2 + Math.floor(r() * (seats.length - 1)));
+          const isChairs = r() < 0.75, design = isChairs ? pick(['stick', 'ladderback', 'spindle', 'panel']) : pick(['square', 'three_leg_round', 'milking']);
+          let placed = 0;
+          for (const [x, z, yaw] of seats) {
+            if (placed >= n) break;
+            if (x < rm.min.x + 0.3 || x > rm.max.x - 0.3 || z < rm.min.y + 0.3 || z > rm.max.y - 0.3) continue;
+            // (the table's own clearance already keeps other furniture off these seats)
             const m = mods({ fill: r() });
-            const isChair = r() < 0.7;
-            const cm = makeFurniture(isChair ? 'chair' : 'stool', isChair ? pick(['stick', 'ladderback', 'spindle', 'panel']) : pick(['square', 'three_leg_round', 'milking']), m);
-            const p = new THREE.Vector3(tbl.pos.x + Math.cos(a) * cd, rm.y, tbl.pos.z + Math.sin(a) * cd);
-            if (p.x < rm.min.x + 0.3 || p.x > rm.max.x - 0.3 || p.z < rm.min.y + 0.3 || p.z > rm.max.y - 0.3) continue;
-            // chairs face the table, slightly askew
-            out.push({ model: cm, pos: p, yaw: Math.atan2(tbl.pos.x - p.x, tbl.pos.z - p.z) + (r() - 0.5) * 0.4, room: ri, mods: m });
+            const cm = makeFurniture(isChairs ? 'chair' : 'stool', design, m);
+            const pull = r() * 0.08;
+            out.push({ model: cm, pos: new THREE.Vector3(x - Math.sin(yaw) * pull, rm.y, z - Math.cos(yaw) * pull), yaw: yaw + (r() - 0.5) * 0.12, room: ri, mods: m });
+            placed++;
           }
           onSurface(tbl, ['bread', 'apple', 'cheese', 'jug', 'cup', 'bowl', 'plate', 'onion', 'pear', 'candle'], 3 + Math.floor(r() * 4));
           const c = makeFurniture('candle', pick(['taper', 'cluster', 'candelabra', 'pillar']), mods());
@@ -259,6 +272,29 @@ export function furnish(model: BuildingModel, seed: number): { furniture: Placem
         tryPlace('shelf', 'open', mods(), true);
         break;
       }
+    }
+    // big rooms shouldn't echo: keep furnishing until the floor is reasonably used (a dresser, a settle,
+    // a cupboard of plates, chests, a side table, firewood by the hearth…)
+    const FILL: Partial<Record<RoomKind, [Category, string[] | null][]>> = {
+      common: [['cupboard', null], ['shelf', null], ['chest', null], ['bench', null], ['chair', ['armchair', 'settle']], ['drawers', null], ['misc', ['firewood', 'washtub', 'loom', 'barrel_stack']], ['desk', null], ['candle', ['stand']]],
+      kitchen: [['cupboard', null], ['shelf', null], ['table', ['workbench', 'kitchen']], ['misc', ['firewood', 'washtub', 'barrel_stack']], ['bench', null], ['chest', null]],
+      bedroom: [['chest', null], ['drawers', null], ['wardrobe', null], ['chair', null], ['desk', null], ['shelf', null], ['bench', null]],
+      shop: [['shelf', null], ['cupboard', null], ['chest', null], ['misc', ['barrel_stack']], ['table', null]],
+      hall: [['bench', null], ['chest', null], ['cupboard', null], ['misc', ['armor_stand', 'weapon_rack']], ['shelf', null]],
+      dorm: [['chest', null], ['bench', null], ['misc', ['weapon_rack', 'armor_stand']]],
+    };
+    const fill = FILL[rm.kind];
+    if (fill) {
+      const floorThings = () => out.filter((q) => q.room === ri && !q.wallMounted && !['chair', 'stool', 'candle', 'rug'].includes(q.model.category)).length;
+      const target = Math.floor(area / (rm.kind === 'bedroom' ? 5 : 4.5));
+      for (let t = 0; t < 14 && floorThings() < target; t++) {
+        const [cat, names] = fill[Math.floor(r() * fill.length)];
+        const ok = designs(cat).filter((d) => d !== 'throne' && (!names || names.includes(d)));
+        if (!ok.length) continue;
+        tryPlace(cat, pick(ok), mods(), true, 0.1, 25);
+      }
+      // and the everyday clutter of a lived-in house
+      if (rm.kind === 'common' || rm.kind === 'kitchen') for (let i = 0; i < Math.floor(area / 9); i++) items.push({ item: pick(['basket', 'sack', 'bucket', 'crate', 'jug', 'lidded_basket']), pos: placeFree(g, rm, r, 0.3), owner: 'house' });
     }
   });
   return { furniture: out, items };

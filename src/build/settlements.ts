@@ -267,7 +267,48 @@ export class Settlements {
   }
 
   /** Stream buildings around the player; build at most `budget` shells/interiors per call. */
+  /** market wares set out on the stalls (real things you can buy, or snatch and run) */
+  private stallWares = new Map<TownPlan, { props: Prop[]; day: number }>();
+  private static WARES: Record<string, string[]> = {
+    fruit: ['apple', 'pear', 'lemon', 'onion', 'turnip'], bread: ['bread', 'pastry'], cloth: ['cloth', 'rope', 'saddlebag'], pottery: ['jug', 'vase', 'bowl', 'plate', 'cup'],
+    meat: ['meat', 'salted_meat'], cheese: ['cheese', 'cheese_box'], weapons: ['sword', 'mace', 'shield', 'bow', 'arrow'], fish: ['fish', 'smoked_fish'],
+    candles: ['candle', 'lantern', 'book'], tools: ['hatchet', 'spade', 'axe', 'bucket', 'lockpick'],
+  };
+  private updateStalls(player: THREE.Vector3) {
+    const day = this.dayClock;
+    for (const p of this.towns.plans) {
+      if (!p.stalls.length) continue;
+      const d = Math.hypot(p.plaza.x - player.x, p.plaza.z - player.z);
+      const have = this.stallWares.get(p);
+      if (d < 110 && !have) {
+        const r = mulberry32(Math.floor(p.site.x * 7 + p.site.z * 13) + day);
+        const props: Prop[] = [];
+        const owner = p.buildings.find((b) => b.spec.type === 'hall' || b.spec.type === 'shop')?.id ?? p.site.id;
+        p.stalls.forEach((st) => {
+          const ids = Settlements.WARES[st.goods] ?? Settlements.WARES.tools;
+          const c = Math.cos(st.yaw), sn = Math.sin(st.yaw);
+          for (let i = 0; i < 5; i++) {
+            // along the front of the counter (the static heaps of wares fill the back)
+            const lx = -1.1 + i * 0.55 + (r() - 0.5) * 0.1, lz = 0.62;
+            const x = st.x + lx * c + lz * sn, z = st.z - lx * sn + lz * c;
+            const id = ids[Math.floor(r() * ids.length)];
+            if (!ITEMS[id]) continue;
+            const y = this.world.heightAt(st.x, st.z) + 0.96;
+            const pr = this.props.spawn(id, new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromAxisAngle(_up, st.yaw + (r() - 0.5) * 0.6), { owner, sleep: true });
+            if (pr) { pr.price = Math.max(1, Math.round(ITEMS[id].value * 1.1)); props.push(pr); }
+          }
+        });
+        this.stallWares.set(p, { props, day });
+      } else if (have && (d > 200 || have.day !== day && d > 120)) {
+        for (const pr of have.props) if (this.props.props.has(pr) && pr.owner !== 'player' && !pr.held && !pr.stowedIn) this.props.destroy(pr);
+        this.stallWares.delete(p);
+      }
+    }
+  }
+  dayClock = 0;
+
   update(player: THREE.Vector3, budget = 1) {
+    this.updateStalls(player);
     for (const p of this.towns.plans) {
       const d = Math.hypot(p.site.x - player.x, p.site.z - player.z);
       if (d > p.siteR + this.nearR + 60) {
@@ -405,7 +446,7 @@ export class Settlements {
         const wp = it.pos.clone().applyMatrix4(mat);
         wp.y += 0.03;
         const p = this.props.spawn(id, wp, new THREE.Quaternion().setFromAxisAngle(_up, r() * 6.28), { owner: b.id, sleep: true });
-        if (p) { p.age = r() * 24 * (ITEMS[id].food?.spoilDays ?? 1) * 0.5; live.props.push(p); }
+        if (p) { p.age = r() * 24 * (ITEMS[id].food?.spoilDays ?? 1) * 0.5; live.props.push(p); if (it.owner === 'shop') p.price = Math.max(1, Math.round(ITEMS[id].value * 1.25)); }
       }
     }
     interior.updateMatrixWorld(true);

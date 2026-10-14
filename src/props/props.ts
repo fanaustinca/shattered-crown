@@ -20,6 +20,8 @@ export class Prop {
   body: RAPIER.RigidBody | null = null;
   collider: RAPIER.Collider | null = null;
   owner: string | null = null;      // household/shop id that owns it (taking it is theft)
+  /** set out for sale (a shop counter or a market stall): pennies to buy it */
+  price: number | null = null;
   age = 0;                           // game hours
   salted = false; smoked = false;
   contents: Prop[] = [];             // physically stowed props (they ride inside)

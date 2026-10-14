@@ -52,6 +52,27 @@ export class Towns {
     for (const s of SITES) this.plans.push(this.planSite(s));
     this.planHomesteads();
     for (const p of this.plans) for (const b of p.buildings) this.byBuilding.set(b.id, b);
+    this.levelThresholds();
+  }
+
+  /** Buildings levelled later can leave a neighbour's doorstep on a bank or in a hollow. Last of all, bring
+   *  the ground in front of every door back to the step (unless that would cut into another house), then
+   *  re-seat each footprint so nothing that the aprons touched is left uneven. */
+  private levelThresholds() {
+    const w = this.world;
+    const all = this.plans.flatMap((p) => p.buildings);
+    const inside = (b: Placed, x: number, z: number, pad: number) => {
+      const c = Math.cos(b.yaw), sn = Math.sin(b.yaw), px = x - b.x, pz = z - b.z;
+      const u = c * px - sn * pz, v = sn * px + c * pz;
+      return Math.abs(u) < b.spec.w / 2 + pad && Math.abs(v) < b.spec.d / 2 + pad;
+    };
+    for (const b of all) {
+      const fx = Math.sin(b.yaw), fz = Math.cos(b.yaw), D = b.spec.d / 2 + 1.3;
+      const ax = b.x + fx * D, az = b.z + fz * D;
+      if (all.some((o) => o !== b && Math.hypot(o.x - ax, o.z - az) < 40 && inside(o, ax, az, 1.2))) continue;
+      w.levelRect(ax, az, 2.6, 2.0, b.yaw, b.y, 1.8);
+    }
+    for (const b of all) w.levelRect(b.x, b.z, b.spec.w + 0.6, b.spec.d + 0.6, b.yaw, b.y, 0.05);
   }
 
   /** Lone farmsteads scattered over the open country of both kingdoms (and a few on the isles). */
@@ -250,8 +271,17 @@ export class Towns {
     const R = site.r;
     if (site.kind === 'capital') {
       // the walls: an irregular ring that bulges and kinks with the ground, gates where the roads come in
-      const gates: number[] = [];
-      for (let i = 0; i < 6; i++) gates.push((site.gateYaw ?? 0) + (i / 6) * Math.PI * 2 + (i ? (r() - 0.5) * 0.4 : 0));
+      // a gate wherever a road reaches the wall, then a few more so no quarter is cut off
+      const gates: number[] = roadGates(w, site, R * 0.97);
+      if (!gates.length) gates.push(site.gateYaw ?? 0);
+      for (let k = 0; gates.length < 4 && k < 12; k++) {
+        // the widest stretch of wall without a gate gets one in its middle
+        const sorted = [...gates].sort((a, b) => a - b);
+        let gapA = 0, gapW = 0;
+        for (let i = 0; i < sorted.length; i++) { const a0 = sorted[i], a1 = i + 1 < sorted.length ? sorted[i + 1] : sorted[0] + Math.PI * 2; if (a1 - a0 > gapW) { gapW = a1 - a0; gapA = a0; } }
+        if (gapW < 1.3) break;
+        gates.push(gapA + gapW / 2);
+      }
       const wp = organicRing(site, R * 0.97, 34, gates, w, r, 0.13);
       wallR = (ang) => polyRadius(wp, site.x, site.z, ang);
       plan.walls = { site: site.id, pts: wp, r: R * 0.97, gates, height: 11, style: iron ? 'dark' : 'stone', center: [site.x, site.z] };
@@ -293,7 +323,9 @@ export class Towns {
       // the town has spilled out past its walls along every road (and up the mountain to Ironspire)
       this.faubourgs(plan, add, wallR, iron ? 720 : 380, iron ? 1 : 0.7, r);
     } else if (site.kind === 'castle') {
-      const gates = [site.gateYaw ?? 0];
+      // the castle gate faces the road that climbs to it
+      const rg = roadGates(w, site, R * 0.84);
+      const gates = [rg.length ? rg[0] : site.gateYaw ?? 0];
       const wp = organicRing(site, R * 0.84, 9 + Math.floor(r() * 4), gates, w, r, 0.17);
       wallR = (ang) => polyRadius(wp, site.x, site.z, ang);
       plan.walls = { site: site.id, pts: wp, r: R * 0.84, gates, height: 13, style: iron ? 'dark' : 'stone', center: [site.x, site.z] };
@@ -654,6 +686,23 @@ export class Towns {
  * An irregular wall circuit: vertices at uneven angles and radii (bulging with noise and pulled in where the
  * ground falls away), kept regular only around the gates so the gatehouses sit square on the roads.
  */
+/** Angles (atan2(dz, dx) about the site) at which the roads cross a circle of radius R, nearest-first deduped. */
+function roadGates(w: World, site: Site, R: number): number[] {
+  const out: number[] = [];
+  for (const rd of w.roads) {
+    const P = rd.pts;
+    for (let k = 0; k + 5 < P.length; k += 3) {
+      const d0 = Math.hypot(P[k] - site.x, P[k + 1] - site.z), d1 = Math.hypot(P[k + 3] - site.x, P[k + 4] - site.z);
+      if ((d0 - R) * (d1 - R) > 0) continue;
+      const t = (R - d0) / ((d1 - d0) || 1e-6);
+      const x = P[k] + (P[k + 3] - P[k]) * t, z = P[k + 1] + (P[k + 4] - P[k + 1]) * t;
+      const a = Math.atan2(z - site.z, x - site.x);
+      if (!out.some((o) => Math.abs(Math.atan2(Math.sin(o - a), Math.cos(o - a))) < 0.35)) out.push(a);
+    }
+  }
+  return out;
+}
+
 function organicRing(site: Site, R: number, n: number, gates: number[], w: World, r: () => number, irregular: number): [number, number][] {
   const base = w.heightAt(site.x, site.z);
   const angs: number[] = [];

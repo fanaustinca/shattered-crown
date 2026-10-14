@@ -40,6 +40,7 @@ import { frameStamp, flushBoneAtlas } from './creature/rig';
 import { Music } from './core/music';
 import { Talk } from './npc/talk';
 import { Naval } from './war/naval';
+import { TravelPosts } from './world/posts';
 import { Destruction } from './war/destruct';
 import { ClothSystem } from './render/cloth';
 
@@ -142,6 +143,7 @@ export class Game {
   music = new Music();
   talk = new Talk(this);
   naval = new Naval(this);
+  posts = new TravelPosts(this);
   destruct = new Destruction(this);
   private clothDt = 0;
   cloth!: ClothSystem;
@@ -224,6 +226,7 @@ export class Game {
     this.cloth.setEnabled(settings.cloth);
     this.settlements.buildStatic();
     this.destruct.adopt(this.settlements.wallSections);
+    this.posts.build();
     // the kingdoms' banners stream from the towers
     for (const f of this.settlements.flags) {
       const pole = new THREE.Object3D();
@@ -477,6 +480,7 @@ export class Game {
     this.war.update(dt);
     this.mark('war');
     this.settlements.people = [this.player.pos, ...this.residents.live.map((n) => n.st.pos)];
+    this.settlements.dayClock = this.dayCount;
     this.settlements.update(this.freeCam ? this.camera.position : this.player.pos, 2);
     this.settlements.update2(dt, dt * this.daySpeed * (this.sleepUntil >= 0 ? 900 : 1), this.time, this.camera.position);
     this.mark('settlements');
@@ -537,9 +541,9 @@ export class Game {
 
   /** Travel to another town's stable yard (hired horse and guide, or a boat): time passes, you arrive at the
    *  outskirts by the stables. A horse you are riding or leading comes with you. */
-  fastTravel(plan: { site: { name: string; x: number; z: number }; stableYard?: { arrive: [number, number] }; plaza: { x: number; z: number } }, hours: number) {
-    const [x, z] = plan.stableYard?.arrive ?? [plan.plaza.x + 6, plan.plaza.z + 6];
-    const mount = this.mount;
+  fastTravel(plan: { site: { name: string; x: number; z: number }; stableYard?: { arrive: [number, number] }; plaza: { x: number; z: number } }, hours: number, alone = false) {
+    const [x, z] = plan.stableYard?.arrive ?? (alone ? [plan.plaza.x, plan.plaza.z] : [plan.plaza.x + 6, plan.plaza.z + 6]);
+    const mount = alone ? null : this.mount;
     if (this.player.seat) this.player.standUp();
     this.pipeline.finalUniforms.uFade.value = 1;
     const before = this.hours;
