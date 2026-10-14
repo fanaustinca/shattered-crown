@@ -216,7 +216,7 @@ export class War {
     this.game.particles.emitters.push({ pos: pos.clone().add(new THREE.Vector3(0, 0.25, 0)), kind: 'campfire', acc: 0 });
     this.game.campfires.push(pos.clone().add(new THREE.Vector3(0, 0.4, 0)));
   }
-  private addCannon(pos: THREE.Vector3, yaw: number, side: Side) {
+  addCannon(pos: THREE.Vector3, yaw: number, side: Side) {
     const obj = instanceModel('cannon_01') ?? new THREE.Group();
     obj.position.copy(pos);
     obj.rotation.y = yaw;
@@ -328,6 +328,9 @@ export class War {
       if (slow || water || b.t > 12) {
         const onShip = b.t < 12 && g.naval.hit(pos, (b.ship as never) ?? null, b.byPlayer);
         if (b.t < 12 && !onShip) {
+          // walls take the blow (and crack, and fall); open ground gets a crater; kegs nearby go up
+          g.destruct.impact(pos, 1, !water && pos.y - g.world.heightAt(pos.x, pos.z) < 1.2);
+          for (const pr of g.props.props) if (pr.def.id === 'powder' && pr.obj.position.distanceTo(pos) < 1.6) g.destruct.detonate(pr);
           g.particles.emit(water ? 'splash' : 'dust', pos, water ? 40 : 30);
           if (!water) { g.particles.emit('smoke', pos, 12); g.particles.emit('mud', pos, 20); }
           g.sound?.(water ? 'splash' : 'impact:wood', pos, 1.5);

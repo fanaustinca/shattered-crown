@@ -86,6 +86,7 @@ export class Interaction {
             if (this.canStash(pr)) add({ key: 'F', label: 'Take', run: () => this.stash(pr) });
             if (pr.def.food) add({ key: 'Q', label: 'Eat', run: () => this.eatProp(pr) });
             if (pr.container && !pr.container.open) add({ key: 'X', label: 'Open', run: () => this.openPropContainer(pr) });
+            if (pr.def.id === 'powder') add({ key: 'X', label: 'Light the fuse', run: () => g.destruct.light(pr) });
           } else if (pr.container) {
             add({ key: 'E', label: `Put ${this.held.def.name.toLowerCase()} in ${pr.def.name.toLowerCase()}`, run: () => this.putInto(this.held!, pr) });
           }

@@ -5,7 +5,7 @@ import { GeoBuilder } from './geom';
 import type { WallPlan } from '../world/towns';
 import type { Bridge } from '../world/layout';
 
-export interface StructModel { geo: GeoBuilder; colliders: { c: THREE.Vector3; h: THREE.Vector3; q?: THREE.Quaternion }[]; gates: { pos: THREE.Vector3; yaw: number; w: number; h: number }[]; torches: THREE.Vector3[]; flags?: { pos: THREE.Vector3; style: 'stone' | 'dark' | 'palisade' }[] }
+export interface StructModel { sections?: import('../war/destruct').WallSection[]; geo: GeoBuilder; colliders: { c: THREE.Vector3; h: THREE.Vector3; q?: THREE.Quaternion }[]; gates: { pos: THREE.Vector3; yaw: number; w: number; h: number }[]; torches: THREE.Vector3[]; flags?: { pos: THREE.Vector3; style: 'stone' | 'dark' | 'palisade' }[] }
 
 const q = (yaw: number) => new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
 
@@ -60,16 +60,24 @@ export function buildWalls(plan: WallPlan, ground: (x: number, z: number) => num
       const top = new THREE.Vector3(0, (passH + totalH + 3) / 2, 0).applyMatrix4(g.matrix);
       out.colliders.push({ c: top, h: new THREE.Vector3(gw / 2, (totalH + 3 - passH) / 2, (T + 3) / 2), q: wq });
     } else {
-      g.box(stone, 0, totalH / 2, 0, len + 0.4, totalH, T, 0.38);
-      // battered stone footing, a string course, and buttresses along long runs
+      // the curtain is built in ~6 m sections, each one its own piece of masonry that can be cracked and
+      // brought down by gunfire (the battered footing stays: it's mostly earth and rubble core)
       const footH = 1.5 + (ground(mx, mz) - gy) + 1.2;
       g.box(plinthK, 0, footH / 2, 0, len + 0.5, footH, T + 0.9, 0.5);
-      g.box(cap, 0, totalH * 0.62, 0, len + 0.45, 0.35, T + 0.25, 0.6);
       const nb = Math.floor(len / 11);
-      for (let k = 1; k <= nb; k++) for (const s of [-1, 1]) g.box(stone, -len / 2 + k * len / (nb + 1), totalH * 0.35, s * (T / 2 + 0.45), 1.6, totalH * 0.7, 0.9, 0.38);
-      crenels(g, cap, 0, totalH, len, T);
-      // wall-walk planks and the inner parapet
-      out.colliders.push({ c: new THREE.Vector3(0, totalH / 2, 0).applyMatrix4(g.matrix), h: new THREE.Vector3(len / 2 + 0.2, totalH / 2, T / 2), q: q(-yaw) });
+      const nSec = Math.max(1, Math.round(len / 6));
+      for (let k = 0; k < nSec; k++) {
+        const x0 = -len / 2 - 0.2 + (k / nSec) * (len + 0.4), x1 = -len / 2 - 0.2 + ((k + 1) / nSec) * (len + 0.4), xs = (x0 + x1) / 2, sl = x1 - x0;
+        const sg = new GeoBuilder();
+        sg.matrix.copy(g.matrix);
+        sg.box(stone, xs, totalH / 2, 0, sl + 0.01, totalH, T, 0.38);
+        sg.box(cap, xs, totalH * 0.62, 0, sl + 0.05, 0.35, T + 0.25, 0.6);
+        for (let b = 1; b <= nb; b++) { const bx = -len / 2 + b * len / (nb + 1); if (bx >= x0 && bx < x1) for (const sd of [-1, 1]) sg.box(stone, bx, totalH * 0.35, sd * (T / 2 + 0.45), 1.6, totalH * 0.7, 0.9, 0.38); }
+        crenels(sg, cap, xs, totalH, sl, T);
+        const frame = g.matrix.clone();
+        const center = new THREE.Vector3(xs, totalH / 2, 0).applyMatrix4(frame);
+        (out.sections ??= []).push({ geo: sg.build(), frame, xm: xs, len: sl, height: totalH, T, stone, cap, center, half: new THREE.Vector3(sl / 2, totalH / 2, T / 2), q: q(-yaw), hp: 1, handle: null, collider: null, cracks: 0, collapsed: false, site: plan.site });
+      }
     }
     g.pop();
     // round tower at the vertex

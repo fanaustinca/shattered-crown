@@ -40,6 +40,7 @@ import { frameStamp, flushBoneAtlas } from './creature/rig';
 import { Music } from './core/music';
 import { Talk } from './npc/talk';
 import { Naval } from './war/naval';
+import { Destruction } from './war/destruct';
 import { ClothSystem } from './render/cloth';
 
 export type Progress = (f: number, msg: string) => void;
@@ -141,6 +142,7 @@ export class Game {
   music = new Music();
   talk = new Talk(this);
   naval = new Naval(this);
+  destruct = new Destruction(this);
   private clothDt = 0;
   cloth!: ClothSystem;
   get clothOn() { return settings.cloth; }
@@ -208,7 +210,8 @@ export class Game {
     await this.physics.init(this.world);
     this.props = new PropManager(this.physics, this.scene, (x, z) => this.groundAt(x, z));
     this.props.prep = (o) => this.lighting.prepObject(o);
-    this.props.onImpact = (p, speed, at) => this.audio.play(p.def.breakable ? 'impact:ceramic' : p.def.kind === 'weapon' || p.def.id.includes('metal') ? 'impact:metal' : p.def.mass < 0.6 ? 'impact:soft' : 'impact:wood', at, Math.min(1, speed / 6));
+    this.props.onImpact = (p, speed, at) => { if (p.def.id === 'powder' && speed > 9) this.destruct.detonate(p); this.impactSound(p, speed, at); };
+    this.impactSound = (p, speed, at) => this.audio.play(p.def.breakable ? 'impact:ceramic' : p.def.kind === 'weapon' || p.def.id.includes('metal') ? 'impact:metal' : p.def.mass < 0.6 ? 'impact:soft' : 'impact:wood', at, Math.min(1, speed / 6));
     this.props.waterAt = (x, z) => { const wl = this.world.waterLevelAt(x, z); if (wl !== 0) return wl + riverChop(x, z, this.time, waterUniforms.uWaveAmp.value); return this.world.heightAt(x, z) < 0.5 ? seaHeight(x, z, this.time, waterUniforms.uWaveAmp.value) : -Infinity; };
     this.props.currentAt = (x, z) => this.world.currentAt(x, z);
     this.props.dryAt = (p) => this.ships.some((sh) => sh.contains(p));
@@ -220,6 +223,7 @@ export class Game {
     this.cloth = new ClothSystem(this.scene, (x, z) => this.world.heightAt(x, z));
     this.cloth.setEnabled(settings.cloth);
     this.settlements.buildStatic();
+    this.destruct.adopt(this.settlements.wallSections);
     // the kingdoms' banners stream from the towers
     for (const f of this.settlements.flags) {
       const pole = new THREE.Object3D();
@@ -444,6 +448,7 @@ export class Game {
     this.residents.step(aiDt);
     this.talk.update(aiDt);
     this.naval.update(aiDt);
+    this.destruct.update(aiDt);
     this.war.step(aiDt);
     this.mark('ai');
     this.physics.update(simDt);
@@ -482,6 +487,7 @@ export class Game {
   }
 
   battleNear = false;
+  impactSound: (p: import('./props/props').Prop, speed: number, at: THREE.Vector3) => void = () => {};
   private updateMusic(dt: number) {
     const ctx = this.audio.ctx;
     if (!ctx) return;

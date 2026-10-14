@@ -112,6 +112,8 @@ export class Settlements {
   /** furnished interiors */
   interiorR = 48;
   shells: BatchPool;
+  /** destructible curtain-wall sections (handed to the destruction system) */
+  wallSections: import('../war/destruct').WallSection[] = [];
   /** positions of characters near doors (set by the game each frame) */
   people: THREE.Vector3[] = [];
   constructor(public world: World, public phys: Physics, public scene: THREE.Scene, public props: PropManager, towns: Towns) {
@@ -129,6 +131,13 @@ export class Settlements {
     const ground = (x: number, z: number) => this.world.heightAt(x, z);
     const add = (s: StructModel) => {
       for (const m of meshesFrom(s.geo.build())) { m.matrixAutoUpdate = false; this.structures.add(m); }
+      // destructible wall sections: each in the building batch with its own collider
+      for (const sec of s.sections ?? []) {
+        sec.handle = this.shells.add(sec.geo, new THREE.Matrix4());
+        const d = RAPIER.ColliderDesc.cuboid(sec.half.x, sec.half.y, sec.half.z).setTranslation(sec.center.x, sec.center.y, sec.center.z).setRotation(sec.q).setCollisionGroups(groups(G_STATIC, ALL));
+        sec.collider = this.phys.world.createCollider(d, this.phys.world.createRigidBody(RAPIER.RigidBodyDesc.fixed()));
+        this.wallSections.push(sec);
+      }
       const body = this.phys.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
       for (const c of s.colliders) {
         const d = RAPIER.ColliderDesc.cuboid(c.h.x, c.h.y, c.h.z).setTranslation(c.c.x, c.c.y, c.c.z).setCollisionGroups(groups(G_STATIC, ALL));

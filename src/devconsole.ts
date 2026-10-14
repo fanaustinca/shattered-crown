@@ -51,6 +51,10 @@ export function installDevConsole(game: Game) {
       g.carts.push(new Cart(g, p, g.player.yaw + Math.PI / 2, Math.floor(Math.random() * 10)));
       return say('A cart rolls up. Hitch a horse or donkey to it (E at the shafts).');
     },
+    /** a field gun in front of you, pointing where you look (E to man it, click to fire, R to reload) */
+    cannon: () => { const p = ahead(4); g.war.addCannon(p, g.player.yaw + Math.PI, (g.war.enlisted ?? 'vanguardia') as Side); return say('A loaded field gun. E to man it, click to fire, R to reload. Try it on a castle wall.'); },
+    /** powder kegs (E to light the fuse; shoot or drop them and they go up at once) */
+    powder: (n = 1) => spawn.item('powder', n),
     /** start the battle at the nearest front now */
     battle: () => {
       const F = g.war.fronts;
@@ -137,6 +141,7 @@ export function installDevConsole(game: Game) {
         ['spawn.army(side, n)', "soldiers ('vanguardia' | 'ironreach') formed up ahead"],
         ['spawn.column(side, n)', 'a column marching down the nearest road to the front'],
         ['spawn.battle()', 'start the pitched battle at the nearest front now'],
+        ['spawn.cannon() · spawn.powder(n)', 'a field gun to man · powder kegs (E lights the fuse)'],
         ['spawn.cavalry(side, n)', 'mounted soldiers'],
         ['spawn.squad(n)', 'soldiers who follow your orders (2/3/4/5)'],
         ['spawn.item(id, n) · spawn.items()', 'any item, e.g. spawn.item("apple", 10)'],
