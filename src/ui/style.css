@@ -55,7 +55,7 @@ kbd { display: inline-block; min-width: 1.6em; padding: 1px 6px; margin-right: 4
 .pause nav button.on { border-color: var(--gold); color: var(--gold); }
 .pause section { flex: 1; overflow: auto; padding: 18px 24px; }
 .pause .btns { display: flex; gap: 10px; }
-.help { columns: 2 420px; column-gap: 28px; } .help .hs { break-inside: avoid; margin-bottom: 18px; }
+div.help { columns: 2 420px; column-gap: 28px; } .help .hs { break-inside: avoid; margin-bottom: 18px; }
 .help table { border-collapse: collapse; width: 100%; } .help td { padding: 3px 6px; vertical-align: top; border-bottom: 1px solid rgba(216,180,90,.12); } .help td:first-child { width: 38%; }
 .settings label { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid rgba(216,180,90,.12); max-width: 620px; }
 .settings select, .settings input[type=range] { width: 260px; }
