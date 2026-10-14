@@ -34,7 +34,7 @@ import { War } from './war/war';
 import { Cart } from './vehicles/cart';
 import { Ship } from './vehicles/ship';
 import { mulberry32 } from './core/noise';
-import type { Placed } from './world/towns';
+import type { Placed, TownPlan } from './world/towns';
 import { VERSION } from './version';
 import { frameStamp, flushBoneAtlas } from './creature/rig';
 import { Music } from './core/music';
@@ -374,6 +374,21 @@ export class Game {
       const z = b.z + 60, x = riverX(z) - riverWidth(z) * 0.3;
       this.ships.push(new Ship(this, new THREE.Vector3(x, 0, z), 0, 'boat', 'Skiff'));
     }
+  }
+
+  /** A new ship from the harbour's shipwright, moored in deep water off the longest dock of a port town. */
+  buyShip(plan: TownPlan, cls: 'brigantine' | 'frigate' | 'manowar', name: string) {
+    const d = [...plan.docks].sort((a, b) => b.len - a.len)[0];
+    if (!d) return null;
+    const off = new THREE.Vector3(Math.sin(d.yaw), 0, Math.cos(d.yaw)), side = new THREE.Vector3(off.z, 0, -off.x);
+    const yaw = Math.atan2(-off.z, off.x);
+    const L = { brigantine: 26, frigate: 44, manowar: 58 }[cls], dr = { brigantine: 2.9, frigate: 4.6, manowar: 6.8 }[cls];
+    let sp = this.deepWater(new THREE.Vector3(d.x, 0, d.z).addScaledVector(off, d.len / 2 + 20), off, yaw, L / 2 + 2, dr + 1.5);
+    for (let k = 0; k < 12 && this.ships.some((o) => o.kind !== 'boat' && o.pos.distanceTo(new THREE.Vector3(sp.x, o.pos.y, sp.z)) < (o.length + L) / 2 + 10); k++) sp = this.deepWater(sp.clone().addScaledVector(side, 35), off, yaw, L / 2 + 2, dr + 1.5);
+    const sh = new Ship(this, sp, yaw, cls, name);
+    sh.owner = 'player';
+    this.ships.push(sh);
+    return sh;
   }
 
   /** Move a mooring point out along `dir` until the whole hull (half-length along its yaw) floats in `depth` m of water. */

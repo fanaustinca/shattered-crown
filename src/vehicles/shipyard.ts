@@ -68,6 +68,11 @@ export interface ShipPlan {
   top: (x: number) => number;
   /** walkable deck height at (x) on the weather decks (quarterdeck, waist, forecastle) */
   weatherY: (x: number) => number;
+  /** the companion stairs from the waist up to the quarterdeck and forecastle (ship space) */
+  stairs: { xLow: number; xHigh: number; z: number; y0: number; y1: number }[];
+  /** hatch openings in the weather deck (x centres; half-sizes) and the quarterdeck/forecastle breaks */
+  hatches: { x: number; hx: number; hz: number }[];
+  qdX: number; fcX: number;
 }
 
 const ss = (a: number, b: number, x: number) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
@@ -104,6 +109,7 @@ export function planShip(cls: ShipClass): ShipPlan {
   const C = (c: THREE.Vector3, h: THREE.Vector3, m = 1, q?: THREE.Quaternion) => colliders.push({ c, h, m, q });
   const guns: ShipPlan['guns'] = [], doors: ShipPlan['doors'] = [], lights: THREE.Vector3[] = [], hammocks: THREE.Vector3[] = [];
   const sails: ShipPlan['sails'] = [];
+  const stairList: ShipPlan['stairs'] = [];
 
   // ---- gun ports: positions along the hull for every enclosed gun deck and the weather deck ----
   const ports: { x: number; y0: number; y1: number; deck: number; weather: boolean }[] = [];
@@ -310,6 +316,7 @@ export function planShip(cls: ShipClass): ShipPlan {
     doors.push({ pos: v(qdX + 0.14, upper, -0.5), yaw: Math.PI / 2, w: 1.0, h: Math.min(S.qdH - 0.2, 1.9), hinge: 1 });
     // stairs up to the quarterdeck and the forecastle, either side of the door
     const stairs = (xLow: number, xHigh: number, y0: number, y1: number, z: number) => {
+      stairList.push({ xLow, xHigh, z, y0, y1 });
       const n = Math.max(4, Math.round((y1 - y0) / 0.24)), run = xHigh - xLow;
       for (let k = 0; k < n; k++) { const t = (k + 0.5) / n; hull.box(DECKP, xLow + run * t, y0 + (y1 - y0) * (k + 1) / n - 0.04, z, Math.abs(run) / n + 0.04, 0.06, 0.85, 1.2); }
       for (const e of [-0.45, 0.45]) { hull.push().translate((xLow + xHigh) / 2, (y0 + y1) / 2 - 0.1, z + e).rotateZ(Math.atan2(y1 - y0, run)); hull.box(DARK, 0, 0, 0, Math.hypot(run, y1 - y0), 0.2, 0.06, 2); hull.pop(); }
@@ -456,7 +463,8 @@ export function planShip(cls: ShipClass): ShipPlan {
   const nb = cls === 'brigantine' ? 6 : 9;
   for (let i = 0; i < nb; i++) { const x = -H * 0.85 + (i + 0.5) / nb * H * 1.7; const w = hb(x, wl) * 0.75; for (const s of [1, -1]) buoy.push(v(x, wl - 1, s * w)); }
 
-  return { spec: S, cls, hull, inside, colliders, sails, guns, doors, lights, hammocks, cabin: cab, helm, buoy, waterline: wl, deckY: upper, topY: top(0), hb, top, weatherY };
+  return { spec: S, cls, hull, inside, colliders, sails, guns, doors, lights, hammocks, cabin: cab, helm, buoy, waterline: wl, deckY: upper, topY: top(0), hb, top, weatherY,
+    stairs: stairList, hatches: hatchXs.filter((hx) => hx > qdX + hatchHalfX && hx < fcX - hatchHalfX).map((x) => ({ x, hx: hatchHalfX, hz: hatchHalfZ })), qdX, fcX };
 }
 
 /** A rope or stay: a thin cylinder from a to b. */

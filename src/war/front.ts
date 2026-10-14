@@ -8,10 +8,11 @@ import * as THREE from 'three';
 import type { Game } from '../game';
 import type { War, Soldier } from './war';
 import { riverX, type Bridge } from '../world/layout';
+import { ITEMS, buildItemMesh } from '../props/items';
 
 type Side = 'vanguardia' | 'ironreach';
 
-interface Live { center: THREE.Vector3; dir: THREE.Vector3; t: number; start: Record<Side, number>; ids: Set<Soldier>; phaseT: number; id: number }
+interface Live { center: THREE.Vector3; dir: THREE.Vector3; t: number; start: Record<Side, number>; ids: Set<Soldier>; phaseT: number; id: number; guns: ReturnType<War['addCannon']>[] }
 export interface Front { bridge: Bridge; path: THREE.Vector3[]; cum: number[]; line: number; battleT: number; live: Live | null; name: string }
 
 let BID = 1;
@@ -90,45 +91,104 @@ export class Fronts {
     if (tell) this.game.hud.toast(msg);
   }
 
-  /** Raise the armies on both sides of the front and set them in line of battle. */
+  /** Raise the armies and set them in line of battle: two long ranks of foot, archers behind, field guns
+   *  behind them and horse on the wings. At a bridge the attackers have already forced a crossing, so the
+   *  battle is fought on open ground on one bank instead of in a crush on the bridge. */
   begin(f: Front) {
     const g = this.game, war = this.war;
-    const { p, dir } = this.posAt(f, f.line);
-    const across = new THREE.Vector3(-dir.z, 0, dir.x);
-    // at the bridge the armies form on the two banks; elsewhere 140 m apart across the road
+    let { p, dir } = this.posAt(f, f.line);
     const atBridge = Math.abs(f.line) < 0.06;
-    const gap = atBridge ? f.bridge.len / 2 + 35 : 70;
-    const live: Live = { center: p.clone(), dir: dir.clone(), t: 0, start: { vanguardia: 0, ironreach: 0 }, ids: new Set(), phaseT: 0, id: BID++ };
-    const budget = Math.max(12, 70 - war.soldiers.filter((s) => s.alive).length);
-    const per = Math.min(26, Math.floor(budget / 2));
+    // the field: open, fairly level, dry ground near the front, clear of towns, with both armies on the
+    // same bank (the line of battle may be turned off the road's line to fit the ground)
+    {
+      const sideB = atBridge ? (Math.random() < 0.5 ? 1 : -1) : 0;
+      const base = atBridge ? p.clone().addScaledVector(dir, sideB * (f.bridge.len / 2 + 70)) : p.clone();
+      const bankOf = (q: THREE.Vector3) => Math.sign(q.x - riverX(q.z));
+      const dry = (x: number, z: number) => g.world.waterLevelAt(x, z) < g.world.heightAt(x, z) - 0.3;
+      const acr0 = new THREE.Vector3(-dir.z, 0, dir.x);
+      let best = p.clone(), bestDir = dir.clone(), bs = 1e9;
+      for (let a = 0; a < 6; a++) for (let c = -3; c <= 3; c++) {
+        const q = base.clone().addScaledVector(dir, (atBridge ? sideB : (a % 2 ? 1 : -1)) * a * 30 * (atBridge ? 1 : 0.6)).addScaledVector(acr0, c * 35);
+        if (!dry(q.x, q.z)) continue;
+        let town = 0;
+        for (const pl of g.towns.plans) { const d = Math.hypot(pl.site.x - q.x, pl.site.z - q.z); town += Math.max(0, (pl.siteR ?? 80) + 80 - d); }
+        for (let k = 0; k < 8; k++) {
+          const th = Math.atan2(dir.z, dir.x) + (k < 4 ? k : 4 - k) * Math.PI / 8;
+          const dd = new THREE.Vector3(Math.cos(th), 0, Math.sin(th)), ac = new THREE.Vector3(-dd.z, 0, dd.x);
+          let ok = true, lo = 1e9, hi = -1e9, wood = 0;
+          for (const u of [-1.5, -1, -0.5, 0, 0.5, 1, 1.5]) for (const w of [-1, 0, 1]) {
+            const x = q.x + dd.x * u * 75 + ac.x * w * 30, z = q.z + dd.z * u * 75 + ac.z * w * 30;
+            const pt = new THREE.Vector3(x, 0, z);
+            if (!dry(x, z) || bankOf(pt) !== bankOf(q)) { ok = false; break; }
+            const h = g.world.heightAt(x, z); lo = Math.min(lo, h); hi = Math.max(hi, h);
+            wood += g.world.forestAt(x, z);
+          }
+          if (!ok) continue;
+          const score = (hi - lo) * 2 + wood * 25 + town * 3 + q.distanceTo(base) * 0.05 + Math.abs(k < 4 ? k : 4 - k) * 4;
+          if (score < bs) { bs = score; best = q; bestDir = dd; }
+        }
+      }
+      p = best.clone(); p.y = g.world.heightAt(p.x, p.z);
+      dir = bestDir;
+    }
+    const across = new THREE.Vector3(-dir.z, 0, dir.x);
+    const gap = 75;
+    const live: Live = { center: p.clone(), dir: dir.clone(), t: 0, start: { vanguardia: 0, ironreach: 0 }, ids: new Set(), phaseT: 0, id: BID++, guns: [] };
+    const budget = Math.max(16, 130 - war.soldiers.filter((s) => s.alive).length);
+    const per = Math.min(48, Math.floor(budget / 2));
+    const bank = (q: THREE.Vector3) => Math.sign(q.x - riverX(q.z));
     for (const side of ['vanguardia', 'ironreach'] as Side[]) {
       const sg = side === 'vanguardia' ? -1 : 1;           // Vanguardia stands on the -dir side
       const front = p.clone().addScaledVector(dir, sg * gap);
       const face = Math.atan2(-sg * dir.x, -sg * dir.z);
       const enemy = p.clone().addScaledVector(dir, -sg * gap);
-      const nCav = Math.max(2, Math.floor(per * 0.15)), nInf = per - nCav;
-      const files = Math.ceil(nInf / 3);
+      const nCav = Math.max(2, Math.round(per * 0.12)), nArch = Math.max(2, Math.round(per * 0.25)), nInf = per - nCav - nArch;
+      const files = Math.ceil(nInf / 2), aFiles = nArch;
       for (let k = 0; k < per; k++) {
-        const cav = k >= nInf;
+        const cav = k >= nInf + nArch, arch = !cav && k >= nInf;
         let slot: THREE.Vector3;
-        if (!cav) {
-          const rank = Math.floor(k / files), file = (k % files) - (files - 1) / 2;
-          slot = front.clone().addScaledVector(across, file * 1.7).addScaledVector(dir, sg * rank * 2.0);
+        if (!cav && !arch) {
+          // two ranks, a pace and a half between files, the rear rank covering the gaps
+          const rank = Math.floor(k / files), file = (k % files) - (files - 1) / 2 + rank * 0.5;
+          slot = front.clone().addScaledVector(across, file * 3.0).addScaledVector(dir, sg * rank * 2.4);
+        } else if (arch) {
+          const a = k - nInf, file = a - (aFiles - 1) / 2;
+          slot = front.clone().addScaledVector(across, file * 4.0).addScaledVector(dir, sg * 12);
         } else {
-          const wing = (k - nInf) % 2 ? 1 : -1;
-          slot = front.clone().addScaledVector(across, wing * (files * 0.85 + 8 + ((k - nInf) >> 1) * 3)).addScaledVector(dir, sg * 6);
+          const c = k - nInf - nArch, wing = c % 2 ? 1 : -1;
+          slot = front.clone().addScaledVector(across, wing * (files * 1.5 + 12 + (c >> 1) * 3.5)).addScaledVector(dir, sg * 8);
         }
+        slot.x += (Math.random() - 0.5) * 0.5; slot.z += (Math.random() - 0.5) * 0.5;
         slot.y = g.world.heightAt(slot.x, slot.z);
-        // they march up from behind their own line
-        const spawn = slot.clone().addScaledVector(dir, sg * (35 + Math.random() * 15)).addScaledVector(across, (Math.random() - 0.5) * 6);
+        // they march up from behind their own line (unless that would be in the river)
+        let spawn = slot.clone().addScaledVector(dir, sg * (12 + Math.random() * 10)).addScaledVector(across, (Math.random() - 0.5) * 6);
+        if (bank(spawn) !== bank(slot) || g.world.waterLevelAt(spawn.x, spawn.z) > g.world.heightAt(spawn.x, spawn.z) - 0.2) spawn = slot.clone().addScaledVector(dir, sg * 4);
         spawn.y = g.groundAt(spawn.x, spawn.z, spawn.y + 40);
         const s = cav ? war.spawnCavalry(side, spawn) : war.spawnSoldier(side, spawn);
         s.battle = { slot, face, phase: 'form', enemy, id: live.id };
         s.marching = false; s.order = 'advance';
         s.path = [slot.clone()];
+        if (arch) this.makeArcher(s);
         if (k === Math.floor(files / 2)) { s.standard = true; war.carryStandard(s); }
         live.ids.add(s);
         live.start[side]++;
+      }
+      // a battery of field guns behind the archers, laid on the enemy line
+      for (const e of [-1, 1]) {
+        const gp = front.clone().addScaledVector(across, e * Math.min(18, files * 0.6)).addScaledVector(dir, sg * 22);
+        if (bank(gp) !== bank(front)) continue;
+        gp.y = g.world.heightAt(gp.x, gp.z);
+        const c = war.addCannon(gp, face, side);
+        c.reload = 8 + Math.random() * 10; c.loaded = false;
+        c.aim = () => {
+          // the nearest knot of enemy foot, with the guns lifting fire once the lines have met
+          let best: THREE.Vector3 | null = null, bd = 1e9;
+          for (const o of live.ids) if (o.alive && o.side !== side) { const d = o.st.pos.distanceTo(c.pos); if (d < bd) { bd = d; best = o.st.pos; } }
+          if (!best || bd < 45) return null;
+          for (const o of live.ids) if (o.alive && o.side === side && o.st.pos.distanceTo(best) < 14) return null;
+          return best.clone();
+        };
+        live.guns.push(c);
       }
     }
     f.live = live;
@@ -136,36 +196,85 @@ export class Fronts {
     g.hud.toast(`Drums at ${f.name}! The armies of Vanguardia and Ironreach are forming for battle ${d < 300 ? 'right here' : `${Math.round(d)} m away`}.`);
     g.sound?.('horn', p, 1);
   }
+  private makeArcher(s: Soldier) {
+    s.archer = true;
+    s.volleyT = 3 + Math.random() * 3;
+    if (s.sword) s.sword.visible = false;
+    const bow = buildItemMesh(ITEMS.bow);
+    if (bow) { bow.position.set(0.02, -0.08, 0.02); s.rig.byName.handL.add(bow); }
+  }
 
   private fight(f: Front, dt: number) {
     const L = f.live!, g = this.game;
     L.t += dt;
     const alive = (side: Side) => [...L.ids].filter((s) => s.alive && s.side === side).length;
     const v = alive('vanguardia'), i = alive('ironreach');
-    // phases: form up (20 s), advance at a walk, charge when the lines are close
+    const across = new THREE.Vector3(-L.dir.z, 0, L.dir.x);
+    // phases: form up (18 s), advance at a walk, charge when the lines are close; archers halt at bowshot
+    // and loose volleys over their own line; field guns fire on the enemy foot until the lines meet
     for (const s of L.ids) {
       if (!s.alive || !s.battle) continue;
       const b = s.battle;
-      const across = new THREE.Vector3(-L.dir.z, 0, L.dir.x);
       const lateral = b.slot.clone().sub(L.center).dot(across);
+      if (s.archer) {
+        const e = this.nearestFoeS(s, L, lateral);
+        const d = e ? e.st.pos.distanceTo(s.st.pos) : 1e9;
+        if (d < 14) { if (s.sword) s.sword.visible = true; if (b.phase !== 'charge') { b.phase = 'charge'; s.sprint = true; } }
+        else if (L.t > 18 && d > 95 && b.phase !== 'charge') { if (b.phase === 'form') { b.phase = 'advance'; s.path = this.route(f, s.st.pos, b.enemy.clone().addScaledVector(across, lateral), lateral * 0.15); } }
+        else if (L.t > 18 && e && b.phase !== 'charge') {
+          s.path = []; s.st.speed = 0;
+          s.st.yaw = Math.atan2(e.st.pos.x - s.st.pos.x, e.st.pos.z - s.st.pos.z);
+          s.volleyT -= dt;
+          if (s.volleyT <= 0) {
+            s.volleyT = 4 + Math.random() * 2.5;
+            // a high, arcing shot at the enemy mass: solve the launch angle for the range, then add the
+            // scatter of a tired arm in a crowd
+            const from = s.st.pos.clone().add(new THREE.Vector3(0, 1.5, 0)), to = e.st.pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 6, 1.0, (Math.random() - 0.5) * 6));
+            const flat = Math.hypot(to.x - from.x, to.z - from.z), V = 48;
+            const disc = V ** 4 - 9.81 * (9.81 * flat * flat + 2 * (to.y - from.y) * V * V);
+            const ang = disc > 0 ? Math.atan((V * V - Math.sqrt(disc)) / (9.81 * flat)) : Math.PI / 4;
+            const hd = new THREE.Vector3(to.x - from.x, 0, to.z - from.z).normalize();
+            const vel = hd.multiplyScalar(V * Math.cos(ang)).setY(V * Math.sin(ang));
+            from.addScaledVector(vel.clone().normalize(), 0.9);
+            g.combat.shoot(from, vel, 30, false);
+            g.sound?.('swing', from, 0.25);
+          }
+        }
+        continue;
+      }
+      if (s.horse) {
+        // horse waits on the wing until the foot are locked together, then sweeps round the flank onto
+        // the enemy archers and guns
+        if (L.t < 40) { if (b.phase !== 'charge' && s.st.pos.distanceTo(b.slot) > 3 && (this.repathT.get(s) ?? 0) < L.t) { s.path = [b.slot.clone()]; this.repathT.set(s, L.t + 1.5); } continue; }
+        if (b.phase !== 'charge') { b.phase = 'charge'; s.sprint = true; }
+        if (!s.fightTarget && (s.path.length === 0 || (this.repathT.get(s) ?? 0) < L.t)) {
+          let tgt: Soldier | null = null, bd = 1e9;
+          for (const o of L.ids) if (o.alive && o.side !== s.side) { const d = o.st.pos.distanceTo(s.st.pos) * (o.archer ? 0.5 : 1); if (d < bd) { bd = d; tgt = o; } }
+          if (tgt) { s.path = [tgt.st.pos.clone()]; this.repathT.set(s, L.t + 2); }
+        }
+        continue;
+      }
       if (b.phase === 'form' && L.t > 18) { b.phase = 'advance'; s.path = this.route(f, s.st.pos, b.enemy.clone().addScaledVector(across, lateral), lateral * 0.15); }
-      if (b.phase !== 'charge' && (s.fightTarget || (L.t > 22 && this.nearestFoe(s, L) < 70))) { b.phase = 'charge'; s.sprint = true; }
+      if (b.phase !== 'charge' && (s.fightTarget || (L.t > 22 && this.nearestFoe(s, L, true) < 45))) { b.phase = 'charge'; s.sprint = true; }
       if (b.phase === 'charge' && !s.fightTarget && (s.path.length === 0 || (this.repathT.get(s) ?? 0) < L.t)) {
-        const e = this.nearestFoeS(s, L);
+        // each man goes for the enemy in front of his own place in the line, so the lines meet along their
+        // whole width instead of everyone converging on one knot
+        const e = this.nearestFoeS(s, L, lateral);
         if (e) { s.path = this.route(f, s.st.pos, e.st.pos, lateral * 0.15); this.repathT.set(s, L.t + 2); }
       }
       if (b.phase === 'form' && !s.path.length) s.st.yaw += (b.face - s.st.yaw) * Math.min(1, dt * 3);
     }
-    const done = (v < L.start.vanguardia * 0.28 || i < L.start.ironreach * 0.28) || L.t > 300;
+    const done = (v < L.start.vanguardia * 0.28 || i < L.start.ironreach * 0.28) || L.t > 360;
     if (!done) return;
     const winner: Side = v / Math.max(1, L.start.vanguardia) >= i / Math.max(1, L.start.ironreach) ? 'vanguardia' : 'ironreach';
     this.shift(f, winner, true);
-    // the beaten side flees back down the road; the victors hold the field
+    // the beaten side flees back down the road; the victors hold the field; the guns are limbered up
     for (const s of L.ids) {
       if (!s.alive) continue;
       s.battle = null; s.sprint = s.side !== winner;
       if (s.side !== winner) s.path = [L.center.clone().addScaledVector(L.dir, (s.side === 'vanguardia' ? -1 : 1) * 250)];
     }
+    for (const c of L.guns) this.war.removeCannon(c);
     f.live = null;
     void g;
   }
@@ -193,6 +302,25 @@ export class Fronts {
     pts.push(b.clone());
     return pts;
   }
-  private nearestFoe(s: Soldier, L: Live) { let d = 1e9; for (const o of L.ids) if (o.alive && o.side !== s.side) d = Math.min(d, o.st.pos.distanceTo(s.st.pos)); return d; }
-  private nearestFoeS(s: Soldier, L: Live) { let d = 1e9, best: Soldier | null = null; for (const o of L.ids) if (o.alive && o.side !== s.side) { const dd = o.st.pos.distanceTo(s.st.pos); if (dd < d) { d = dd; best = o; } } return best; }
+  private nearestFoe(s: Soldier, L: Live, footOnly = false) { let d = 1e9; for (const o of L.ids) if (o.alive && o.side !== s.side && !(footOnly && o.horse)) d = Math.min(d, o.st.pos.distanceTo(s.st.pos)); return d; }
+  /** the enemy a soldier in a live battle should engage (nearest, preferring the man opposite him) */
+  foeFor(s: Soldier, range: number) {
+    const f = this.fronts.find((x) => x.live && x.live.ids.has(s));
+    if (!f || !s.battle) return null;
+    const L = f.live!, across = new THREE.Vector3(-L.dir.z, 0, L.dir.x);
+    const lateral = s.battle.slot.clone().sub(L.center).dot(across);
+    const e = this.nearestFoeS(s, L, lateral * 0.5 + s.st.pos.clone().sub(L.center).dot(across) * 0.5);
+    return e && e.st.pos.distanceTo(s.st.pos) < range ? e : null;
+  }
+  /** nearest enemy, weighted toward the man opposite this one's place in the line */
+  private nearestFoeS(s: Soldier, L: Live, lateral = 0) {
+    const across = new THREE.Vector3(-L.dir.z, 0, L.dir.x);
+    let d = 1e9, best: Soldier | null = null;
+    for (const o of L.ids) if (o.alive && o.side !== s.side) {
+      const lat = o.st.pos.clone().sub(L.center).dot(across);
+      const dd = o.st.pos.distanceTo(s.st.pos) + Math.abs(lat - lateral) * 0.8;
+      if (dd < d) { d = dd; best = o; }
+    }
+    return best;
+  }
 }

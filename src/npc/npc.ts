@@ -280,7 +280,10 @@ export class NPC {
         const toP = g.player.pos.clone().sub(st.pos);
         const camF = new THREE.Vector3(0, 0, -1).applyQuaternion(g.camera.quaternion);
         const seen = toP.length() < 22 && camF.dot(st.pos.clone().sub(g.camera.position).normalize()) > 0.3;
-        if (!seen || this.stuckT > 6) {
+        // soldiers in a battle line jostle each other: never pop them through the crowd
+        const inBattle = !!(this as { battle?: unknown }).battle;
+        if (inBattle) { if (this.path.length > 1) this.path.shift(); this.stuckT = 0; }
+        else if (!seen || this.stuckT > 6) {
           const nx = this.path.shift()!;
           const y = g.groundAt(nx.x, nx.z, nx.y + 1);
           this.body.setTranslation({ x: nx.x, y: y + 0.55 * this.anim.heightScale + 0.3, z: nx.z }, true);

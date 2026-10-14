@@ -100,6 +100,7 @@ export class Combat {
     };
     for (const n of g.residents.live) if (n.alive) consider(n.st.pos, (l, d) => n.hurt(l, d, 'player'), !!n.st.blocking, new THREE.Vector3(Math.sin(n.st.yaw), 0, Math.cos(n.st.yaw)));
     for (const s of g.war.soldiers) if (s.alive) consider(s.st.pos, (l, d) => s.hurt(l, d, 'player'), !!s.st.blocking, new THREE.Vector3(Math.sin(s.st.yaw), 0, Math.cos(s.st.yaw)));
+    for (const n of g.naval.handsNear(p.pos, w.reach + 1.2)) consider(n.pos, (_l, d) => g.naval.hurtHand(n.h, d), false, n.facing);
     for (const a of g.fauna.all()) if (a.mode !== 'dead') consider(a.st.pos, (_l, d) => this.hurtAnimal(a, d), false, new THREE.Vector3());
     // chopping trees with an axe
     if (!hitAny && this.weapon!.weapon!.type === 'axe') {

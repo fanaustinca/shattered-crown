@@ -33,6 +33,9 @@ export class Soldier extends NPC {
   sprint = false;
   /** cavalry: the horse under this soldier */
   horse: Animal | null = null;
+  /** an archer: holds back behind the line and looses volleys */
+  archer = false;
+  volleyT = 0;
   constructor(game: Game, side: Side, pos: THREE.Vector3) {
     const person: Person = {
       id: 'soldier-' + SID++, name: side === 'vanguardia' ? ['Sir Aldo', 'Pikeman Bram', 'Archer Joss', 'Sergeant Wynne', 'Footman Cael', 'Hal of Millbrook'][SID % 6] : ['Varr Grunt', 'Iron Bjorn', 'Kael Ashhand', 'Ulf the Grim', 'Dagny', 'Thorvald'][SID % 6],
@@ -47,6 +50,9 @@ export class Soldier extends NPC {
 interface Cannon {
   obj: THREE.Object3D; barrel: THREE.Object3D | null; pos: THREE.Vector3; yaw: number; pitch: number; side: Side;
   reload: number; recoil: number; loaded: boolean; manned: boolean; target: THREE.Vector3;
+  /** field guns in a battle aim at the enemy army instead of the camp across the river */
+  aim?: () => THREE.Vector3 | null;
+  body?: RAPIER.RigidBody;
 }
 
 class CannonSeat implements Seat, Interactable {
@@ -229,6 +235,13 @@ export class War {
     const col = this.game.physics.world.createCollider(RAPIER.ColliderDesc.cuboid(0.7, 0.6, 1.0).setRotation(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw)).setCollisionGroups(groups(G_STATIC, ALL)), body);
     const seat = new CannonSeat(this, c);
     this.game.physics.owners.set(col.handle, { kind: 'cannon', interact: seat });
+    c.body = body;
+    return c;
+  }
+  removeCannon(c: Cannon) {
+    c.obj.removeFromParent();
+    if (c.body) this.game.physics.removeBody(c.body);
+    const i = this.cannons.indexOf(c); if (i >= 0) this.cannons.splice(i, 1);
   }
 
   /** Fire: a real iron ball, a blast of smoke, and the gun leaps back on its carriage. */
@@ -307,10 +320,11 @@ export class War {
       if (!c.loaded) { c.reload -= dt; if (c.reload <= 0 && !c.manned) c.loaded = true; else if (c.reload <= 0 && c.manned && c.reload > -dt) { c.loaded = true; g.hud.toast('Loaded!'); } }
       if (!c.manned && c.loaded && c.pos.distanceTo(p) < 900 && c.reload <= 0) {
         // aim at the other bank's camp with some error, lob a shot
-        const enemy = this.camps.filter((k) => k.side !== c.side).sort((a, b) => a.pos.distanceTo(c.pos) - b.pos.distanceTo(c.pos))[0];
+        const aimAt = c.aim ? c.aim() : this.camps.filter((k) => k.side !== c.side).sort((a, b) => a.pos.distanceTo(c.pos) - b.pos.distanceTo(c.pos))[0]?.pos;
+        const enemy = aimAt ? { pos: aimAt } : null;
         if (enemy) {
           const d = enemy.pos.distanceTo(c.pos);
-          c.yaw = Math.atan2(enemy.pos.x - c.pos.x, enemy.pos.z - c.pos.z) + (Math.random() - 0.5) * 0.08;
+          c.yaw = Math.atan2(enemy.pos.x - c.pos.x, enemy.pos.z - c.pos.z) + (Math.random() - 0.5) * (c.aim ? 0.04 : 0.08);
           c.pitch = 0.5 * Math.asin(Math.min(1, d * 9.81 / (110 * 110))) + (Math.random() - 0.5) * 0.02;
           this.fire(c);
         }
@@ -373,6 +387,8 @@ export class War {
       for (const e of enemies) { const d = e.st.pos.distanceTo(s.st.pos); if (d < bd) { bd = d; best = e; } }
       if (s.order === 'hold' && best && bd > 8) best = null;
       if (s.battle && s.battle.phase !== 'charge' && bd > 14) best = null;
+      // in a pitched battle each man fights whoever is in front of his own place in the line
+      if (s.battle && s.battle.phase === 'charge') best = this.fronts.foeFor(s, s.horse ? 30 : 22);
       // never charge straight at a foe across the river: the line routes over the bridge instead
       if (best && bd > 6 && Math.sign(best.st.pos.x - riverX(best.st.pos.z)) !== Math.sign(s.st.pos.x - riverX(s.st.pos.z)) && !g.world.bridges.some((b) => Math.hypot(s.st.pos.x - b.x, s.st.pos.z - b.z) < b.len / 2 + 4)) best = null;
       if (s.marching) { if (best && bd < 25) s.marching = false; else best = null; if (s.marching && !s.path.length) s.marching = false; }

@@ -87,6 +87,9 @@ export function installDevConsole(game: Game) {
       return say(`A ${cls === 'manowar' ? "man-o'-war" : cls} is waiting at ${Math.round(w.distanceTo(g.player.pos))} m.`);
     },
     boat: () => spawn.ship('boat'),
+    brigantine: () => spawn.ship('brigantine'),
+    frigate: () => spawn.ship('frigate'),
+    manowar: () => spawn.ship('manowar'),
     /** soldiers in a block in front of you */
     army: (side: Side = 'ironreach', n = 12) => {
       const made = [];

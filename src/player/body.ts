@@ -37,13 +37,17 @@ export class PlayerBody {
     const fp = !p.thirdPerson && p.mode !== 'dead';
     // in first person, keep the body slightly behind the eye so it doesn't clip into view
     const back = fp ? 0.18 : 0;
-    const pos = p.pos.clone().add(new THREE.Vector3(Math.sin(p.yaw) * back, 0, Math.cos(p.yaw) * back));
+    // in the saddle the body faces where the horse faces; looking about turns only the head and shoulders
+    const mount = g.mount as { st?: { yaw: number } } | null;
+    const bodyYaw = mount?.st ? mount.st.yaw : p.yaw + Math.PI;
+    const pos = p.pos.clone().add(new THREE.Vector3(-Math.sin(bodyYaw) * back, 0, -Math.cos(bodyYaw) * back));
+    const look = mount?.st ? p.pos.clone().add(new THREE.Vector3(-Math.sin(p.yaw) * Math.cos(p.pitch) * 10, 1.6 + Math.sin(p.pitch) * 10, -Math.cos(p.yaw) * Math.cos(p.pitch) * 10)) : null;
     const planar = Math.hypot(p.vel.x, p.vel.z);
     this.anim.limp = p.limp;
     this.anim.update(dt, {
-      pos, yaw: p.yaw + Math.PI, speed: p.mode === 'seat' ? 0 : p.mode === 'swim' ? 0 : planar, turn: 0, vel: p.vel,
+      pos, yaw: bodyYaw, speed: p.mode === 'seat' ? 0 : p.mode === 'swim' ? 0 : planar, turn: 0, vel: p.vel,
       action: p.mode === 'dead' ? 'dead' : this.pose === 'sleep' ? 'sleep' : 'idle',
-      look: null, carry: !!g.interaction.held, eating: this.eatT > 0, sitting: this.pose === 'sit', riding: !!g.mount, armed: !!g.combat.drawn,
+      look, carry: !!g.interaction.held, eating: this.eatT > 0, sitting: this.pose === 'sit', riding: !!g.mount, armed: !!g.combat.drawn,
       blocking: g.combat.blocking,
     } as never);
     if (p.mode === 'swim') { this.rig.root.rotation.x = -1.2; this.rig.root.updateMatrixWorld(true); }

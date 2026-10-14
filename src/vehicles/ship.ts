@@ -113,6 +113,8 @@ export class Ship implements Interactable {
   /** broadside guns: ship-space muzzle positions; reload timers per side (+z starboard, -z larboard) */
   reload = { 1: 0, [-1]: 0 } as Record<number, number>;
   side: 'vanguardia' | 'ironreach' | null = null;
+  /** who owns her ('player' once bought from a shipwright) */
+  owner: string | null = null;
   hp = 1;
   detail: RAPIER.Collider[] | null = null;
   coarse: RAPIER.Collider | null = null;
@@ -329,7 +331,7 @@ export class Ship implements Interactable {
     this.helmsman = true;
     p.sitIn(seat);
     p.yaw = this.yaw - Math.PI / 2;
-    g.hud.toast('At the helm: A/D wheel · W/S sails · Z/C trim yards · X anchor · E leave');
+    g.hud.toast(this.plan ? 'At the helm: A/D wheel · W/S sails · Z/C trim yards · Q/R broadsides · G grapple & board · X anchor · E leave' : 'At the helm: A/D wheel · W/S sails · Z/C trim yards · X anchor · E leave');
   }
   drive(inp: Input) {
     const dt = 1 / 60;
@@ -345,6 +347,8 @@ export class Ship implements Interactable {
     // broadsides: Q larboard (left), R starboard (right)
     if (inp.hit('KeyQ')) this.broadside(-1, true);
     if (inp.hit('KeyR')) this.broadside(1, true);
+    // grapple an enemy alongside and send the crew across
+    if (inp.hit('KeyG')) this.game.naval.playerGrapple(this);
   }
 
   /** Buoyancy, wind on the sails, keel resistance, rudder, anchor. */

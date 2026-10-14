@@ -8,7 +8,7 @@ const b = await launch();
 const { page, errors } = await openPage(b, `http://127.0.0.1:${srv.address().port}/?test&quality=high`, { width: 900, height: 900 });
 await page.waitForFunction(() => window.SC?.game?.ready, { timeout: 180000 });
 await page.evaluate(() => { SC.game.manual = true; SC.setTime(10.5); });
-const rows = [['walk', 1.4, 0, 0.5], ['run', 4.6, 0, 0.5], ['idle', 0, 0, 2.5], ['talk', 0, 1, 0.4]];
+const rows = process.env.GAIT ? [['walk', 1.4, 0, 0.5], ['run', 4.6, 0, 0.5], ['sprint', 6.5, 0, 0.5]] : [['walk', 1.4, 0, 0.5], ['run', 4.6, 0, 0.5], ['idle', 0, 0, 2.5], ['talk', 0, 1, 0.4]];
 const files = [];
 for (const [name, speed, talk, stepT] of rows) {
   for (let k = 0; k < 6; k++) {
@@ -23,7 +23,7 @@ for (const [name, speed, talk, stepT] of rows) {
         for (let t = 0; t < 1.5; t += 1 / 120) { __ms.pos.x += speed / 120; __ms.pos.y = g.world.heightAt(__ms.pos.x, __ms.pos.z); g.__studio.anim.update(1 / 120, __ms); }
       }
       const A = g.__studio.anim;
-      const freq = speed > 0 ? 0.75 + speed * 0.32 : 1;
+      const freq = speed > 0 ? Math.max(0.55, speed / Math.min(3.6, 1.0 + speed * 0.42)) : 1;
       const T2 = speed > 0 ? 1 / freq / 6 : stepT;
       for (let t = 0; t < T2; t += 1 / 120) { __ms.pos.x += speed / 120; __ms.pos.y = g.world.heightAt(__ms.pos.x, __ms.pos.z); A.update(1 / 120, __ms); }
       g.__studio.rig.root.updateMatrixWorld(true);

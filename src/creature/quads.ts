@@ -56,8 +56,9 @@ export function buildQuad(L: QuadLandmarks): Anatomy {
   b('earR', 'head', [-earBase[0], earBase[1], earBase[2]]);
   const tb = L.tail.base;
   b('tail1', 'root', yz(tb));
-  b('tail2', 'tail1', [0, tb[0] - L.tail.len * 0.4, tb[1] - L.tail.len * 0.15]);
-  b('tail3', 'tail2', [0, tb[0] - L.tail.len * 0.75, tb[1] - L.tail.len * 0.2]);
+  // the dock arches out from the buttocks before the hair falls
+  b('tail2', 'tail1', [0, tb[0] - L.tail.len * 0.3, tb[1] - L.tail.len * 0.32]);
+  b('tail3', 'tail2', [0, tb[0] - L.tail.len * 0.72, tb[1] - L.tail.len * 0.42]);
   const legs: NonNullable<Anatomy['legs']> = [];
   for (const front of [true, false]) for (const side of [1, -1]) {
     const nm = (front ? 'F' : 'H') + (side > 0 ? 'L' : 'R');
@@ -75,18 +76,20 @@ export function buildQuad(L: QuadLandmarks): Anatomy {
   const k = (n: string) => idx(n);
   const bodyLen = L.pointShoulder[1] - L.buttock[1];
   // barrel: the big rounded ribcage, deepest just behind the elbow
-  P({ type: 'ell', bone: k('spine'), a: [0, (L.back[0] + L.belly[0]) / 2, L.back[1]], r: [W, (L.back[0] - L.belly[0]) / 2, bodyLen * 0.34], k: 0 });
+  P({ type: 'ell', bone: k('spine'), a: [0, (L.back[0] + L.belly[0]) / 2, L.back[1] + bodyLen * 0.04], r: [W, (L.back[0] - L.belly[0]) / 2, bodyLen * 0.32], k: 0 });
   // girth/chest: deep in front
   P({ type: 'ell', bone: k('chest'), a: [0, (L.withers[0] + L.girth[0]) / 2 - 0.02, L.girth[1]], r: [W * 0.92, (L.withers[0] - L.girth[0]) / 2, bodyLen * 0.22], k: bodyLen * 0.12 });
   // belly: drops toward the middle and tucks up into the flank
-  P({ type: 'ell', bone: k('spine'), a: [0, L.belly[0] + 0.12 * W / 0.3, L.belly[1]], r: [W * 0.85, 0.16 * W / 0.3, bodyLen * 0.3], k: bodyLen * 0.2, region: R.belly });
+  P({ type: 'ell', bone: k('spine'), a: [0, L.belly[0] + 0.12 * W / 0.3, L.belly[1] + bodyLen * 0.05], r: [W * 0.85, 0.16 * W / 0.3, bodyLen * 0.26], k: bodyLen * 0.18, region: R.belly });
+  // the flank tucks up from the belly to the stifle (a long, rising underline, not a tube)
+  P({ type: 'cone', bone: k('root'), a: [0, (L.back[0] + L.belly[0]) / 2 + 0.04, L.belly[1] - bodyLen * 0.12], b: [0, L.croup[0] - 0.2, L.croup[1] - bodyLen * 0.02], ra: W * 0.95, rb: W * 0.8, k: 0.16 });
   // topline: withers, back, loin
   P({ type: 'ell', bone: k('chest'), a: yz([L.withers[0] - 0.08, L.withers[1]]), r: [W * 0.35, 0.1, bodyLen * 0.17], k: 0.12 });
   P({ type: 'ell', bone: k('spine'), a: yz([L.back[0] - 0.1, L.back[1]]), r: [W * 0.8, 0.12, bodyLen * 0.28], k: 0.14 });
   // croup and hindquarters: two big rounded muscle masses and the buttocks
   P({ type: 'ell', bone: k('root'), a: yz([L.croup[0] - 0.12, L.croup[1]]), r: [W * 0.85, 0.15, bodyLen * 0.17], k: 0.12 });
   for (const s of [1, -1]) {
-    P({ type: 'ell', bone: k('root'), a: [s * W * 0.55, L.croup[0] - 0.3 * W / 0.3, L.croup[1] - bodyLen * 0.08], r: [W * 0.55, 0.3 * W / 0.3, bodyLen * 0.2], k: 0.1 });
+    P({ type: 'ell', bone: k('root'), a: [s * W * 0.55, L.croup[0] - 0.24 * W / 0.3, L.croup[1] - bodyLen * 0.08], r: [W * 0.55, 0.25 * W / 0.3, bodyLen * 0.19], k: 0.1 });
     // shoulder blade sloping forward-down from the withers
     P({ type: 'ell', bone: k('chest'), a: [s * W * 0.6, (L.withers[0] + L.pointShoulder[0]) / 2, (L.withers[1] + L.pointShoulder[1]) / 2], r: [W * 0.32, (L.withers[0] - L.pointShoulder[0]) * 0.6, bodyLen * 0.12], rot: qX(-0.7), k: 0.08 });
     // upper arm / point of shoulder bulge
@@ -182,7 +185,7 @@ export function buildQuad(L: QuadLandmarks): Anatomy {
   P({ type: 'cone', bone: k('tail2'), a: t2, b: t3, ra: L.tail.r * 0.7, rb: L.tail.r * 0.45, k: 0.02 });
   if (L.tail.hair > 0) {
     P({ type: 'cone', bone: k('tail2'), a: [0, t1[1] - 0.06, t1[2] - 0.03], b: t3, ra: L.tail.hair * 0.8, rb: L.tail.hair, k: 0.04, region: R.hair });
-    P({ type: 'cone', bone: k('tail3'), a: t3, b: [0, t3[1] - L.tail.hairLen, t3[2] - 0.06], ra: L.tail.hair, rb: L.tail.hair * 0.55, k: 0.04, region: R.hair });
+    P({ type: 'cone', bone: k('tail3'), a: t3, b: [0, t3[1] - L.tail.hairLen, t3[2] - 0.1], ra: L.tail.hair, rb: L.tail.hair * 0.85, k: 0.04, region: R.hair });
   }
   L.extras?.(P, k);
   // eyes sit in front of the brow, on the side of the head
@@ -194,18 +197,20 @@ export function buildQuad(L: QuadLandmarks): Anatomy {
 }
 
 export const HORSE: QuadLandmarks = {
-  id: 'horse', width: 0.32,
-  croup: [1.56, -0.6], withers: [1.62, 0.55], back: [1.5, 0.05], belly: [0.8, 0.05],
-  buttock: [1.32, -0.86], pointShoulder: [1.2, 0.86], girth: [0.92, 0.5],
-  neckBase: [1.34, 0.8], throat: [1.66, 1.1], poll: [2.0, 1.2], muzzle: [1.48, 1.6],
-  neckDepth: 0.6, neckTopR: 0.115, craniumR: 0.13, jowlR: 0.155, muzzleR: [0.085, 0.1, 0.1],
-  ear: { len: 0.16, w: 0.045, tilt: 0.25, out: 0.25 },
-  legX: 0.18, hindX: 0.19,
-  front: { elbow: [1.02, 0.68], knee: [0.54, 0.7], fetlock: [0.18, 0.69], hoofZ: 0.74 },
-  hind: { stifle: [1.0, -0.42], hock: [0.6, -0.74], fetlock: [0.18, -0.7], hoofZ: -0.66 },
-  legR: { forearm: 0.11, knee: 0.068, cannon: 0.048, fetlock: 0.062, pastern: 0.046, hoof: [0.068, 0.075, 0.105], thigh: 0.19, gaskin: 0.115 },
-  tail: { base: [1.48, -0.86], len: 0.42, r: 0.06, hair: 0.11, hairLen: 0.78 },
-  mane: 0.055, eyeR: 0.024,
+  id: 'horse', width: 0.31,
+  // ~15.3 hands: withers 1.62 m, girth line ~1.0 m (the legs as long as the chest is deep), body as long as
+  // the horse is tall, a long, high-set neck and a 0.65 m head
+  croup: [1.58, -0.6], withers: [1.66, 0.55], back: [1.46, 0.0], belly: [0.98, 0.04],
+  buttock: [1.34, -0.84], pointShoulder: [1.24, 0.86], girth: [1.0, 0.5],
+  neckBase: [1.38, 0.82], throat: [1.74, 1.14], poll: [2.14, 1.3], muzzle: [1.62, 1.7],
+  neckDepth: 0.64, neckTopR: 0.14, craniumR: 0.15, jowlR: 0.175, muzzleR: [0.08, 0.11, 0.12],
+  ear: { len: 0.17, w: 0.045, tilt: 0.25, out: 0.22 },
+  legX: 0.17, hindX: 0.18,
+  front: { elbow: [1.04, 0.66], knee: [0.54, 0.69], fetlock: [0.18, 0.69], hoofZ: 0.74 },
+  hind: { stifle: [1.04, -0.38], hock: [0.6, -0.76], fetlock: [0.18, -0.72], hoofZ: -0.68 },
+  legR: { forearm: 0.125, knee: 0.07, cannon: 0.047, fetlock: 0.062, pastern: 0.045, hoof: [0.068, 0.075, 0.105], thigh: 0.2, gaskin: 0.125 },
+  tail: { base: [1.5, -0.86], len: 0.42, r: 0.06, hair: 0.11, hairLen: 0.82 },
+  mane: 0.055, eyeR: 0.025,
 };
 export const DONKEY: QuadLandmarks = {
   ...HORSE, id: 'donkey', width: 0.27,

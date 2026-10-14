@@ -24,7 +24,7 @@ for (const [n, speed, ph] of shotsList) {
     for (let t = 0; t < total; t += dt) { ms.pos.x += speed * dt; ms.pos.y = g.world.heightAt(ms.pos.x, ms.pos.z); A.update(dt, ms); }
     s.rig.root.updateMatrixWorld(true);
     const c = s.rig.root.position;
-    g.camera.position.set(c.x, c.y + 1.3, c.z + 4.6); g.camera.lookAt(c.x, c.y + 1.15, c.z); g.camera.updateMatrixWorld();
+    g.camera.position.set(c.x, c.y + 1.2, c.z + 4.2); g.camera.lookAt(c.x, c.y + 1.15, c.z); g.camera.updateMatrixWorld();
     SC.render(2);
   }, [speed, ph]);
   const f = path.join(shots, `hh-${n}.png`); await page.screenshot({ path: f }); files.push(f);

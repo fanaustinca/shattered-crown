@@ -238,9 +238,12 @@ export class QuadAnimator {
         const remain = (1 - sp) * (1 - g.duty) / g.freq * speed;
         S.to.set(home.x + Math.sin(st.yaw) * (stride + remain * 0), 0, home.z + Math.cos(st.yaw) * (stride + remain * 0));
         S.to.y = this.ground(S.to.x, S.to.z);
+        const fastG = THREE.MathUtils.clamp((Math.abs(speed) / this.scale - 3) / 6, 0, 1);
         // fore feet snap up and tuck, then reach out ahead before landing; hind feet sweep forward lower
-        const e = L.front ? 1 - Math.pow(1 - sp, 2.2) : sp * sp * (3 - 2 * sp);
+        const e = L.front ? 1 - Math.pow(1 - sp, 2.2) : 1 - Math.pow(1 - sp, 1.6 + fastG * 0.8);
         F = S.from.clone().lerp(S.to, e);
+        // at speed the hind leg folds up and comes under the body rather than trailing out behind
+        if (!L.front) { const tuck = fastG * 0.4 * Math.sin(Math.min(1, sp * 1.5) * Math.PI); F.x += (home.x - F.x) * tuck; F.z += (home.z - F.z) * tuck; }
         const arc = L.front ? Math.pow(Math.sin(Math.min(1, sp * 1.15) * Math.PI), 0.7) : Math.sin(sp * Math.PI);
         F.y += arc * (L.front ? g.liftF : g.liftH) * this.scale * (this.hop ? 1 : 1);
       } else {
@@ -313,7 +316,10 @@ export class BipedAnimator {
     this.t += dt;
     const speed = st.speed;
     const moving = speed > 0.08;
-    const freq = moving ? 0.75 + speed * 0.32 : 0;
+    // gait cycle rate from a stride length that grows with speed (a walk ~0.9 cycles/s, a run ~1.7):
+    // a high cadence with short steps reads as scurrying and hopping
+    const strideLen = Math.min(3.6, 1.0 + speed * 0.42) * this.heightScale;
+    const freq = moving ? Math.max(0.55, speed / strideLen) : 0;
     this.phase = (this.phase + dt * freq) % 1;
     const k = Math.min(1, dt * 6);
     this.sit += ((st.sitting ? 1 : 0) - this.sit) * k;
@@ -324,10 +330,16 @@ export class BipedAnimator {
     this.eat += ((st.eating ? 1 : 0) - this.eat) * k;
     this.block += ((st.blocking ? 1 : 0) - this.block) * Math.min(1, dt * 10);
     const gy = this.ground(st.pos.x, st.pos.z);
-    const run = Math.min(1, Math.max(0, (speed - 3) / 3));
-    const bob = moving ? (Math.cos(this.phase * Math.PI * 4) * 0.025 * (1 + run)) - run * 0.06 : 0;
+    const run = Math.min(1, Math.max(0, (speed - 2.6) / 3));
+    // walking vaults over the stance leg (highest at mid-stance, lowest in double support); running
+    // is a bounce (lowest at mid-stance as the leg compresses, highest in the flight between steps)
+    const duty0 = 0.6 - run * 0.32;
+    const bob = moving ? Math.cos((this.phase - 0.3) * Math.PI * 4) * 0.018 * (1 - run) - Math.cos((this.phase - duty0 / 2) * Math.PI * 4) * 0.035 * run - run * 0.05 : 0;
+    // and the pelvis shifts over whichever foot is bearing the weight
+    const sway = moving ? Math.sin((this.phase - 0.05) * Math.PI * 2) * 0.028 * (1 - run * 0.7) : 0;
     const limpDrop = this.limp * Math.max(0, Math.sin(this.phase * Math.PI * 2)) * 0.06;
     root.position.set(st.pos.x, (st.ridden || st.riding ? st.pos.y : Math.max(gy, st.pos.y)) + bob - limpDrop - this.sit * 0.48 * (1 - this.ride) - this.sleep * 0.85 - this.dead * 0.85, st.pos.z);
+    root.position.x += Math.cos(st.yaw) * sway; root.position.z -= Math.sin(st.yaw) * sway;
     root.rotation.set(0, st.yaw, 0);
     if (this.sleep > 0.01 || this.dead > 0.01) root.rotateX(-Math.PI / 2 * Math.max(this.sleep, this.dead));
     root.scale.setScalar(this.heightScale);
@@ -342,7 +354,7 @@ export class BipedAnimator {
     const shift = Math.sin(this.t * 0.37 + this.seed) * 0.035 * still * (1 - this.sit);
     const breath = Math.sin(this.t * (moving ? 2.4 + run * 2 : 1.35) + this.seed);
     B.hips.quaternion.copy(E(0, sw * 0.09 * Math.min(1, speed), this.limp * sw * 0.06 + shift));
-    B.spine.quaternion.copy(E(run * 0.2 + this.carry * -0.05 + breath * 0.008, -sw * 0.07 * Math.min(1, speed), -shift * 0.7));
+    B.spine.quaternion.copy(E(run * 0.26 + this.carry * -0.05 + breath * 0.008, -sw * 0.07 * Math.min(1, speed), -shift * 0.7));
     B.chest.quaternion.copy(E(run * 0.06 - breath * 0.012, -sw * 0.1 * Math.min(1, speed), -shift * 0.4));
     // idle fidgets (only standing about, hands free)
     const free = !moving && this.carry < 0.1 && this.eat < 0.1 && this.sit < 0.1 && this.ride < 0.1 && this.sleep < 0.1 && this.dead < 0.1 && !st.armed && this.block < 0.1 && this.swingT < 0;
@@ -361,15 +373,17 @@ export class BipedAnimator {
     if (st.look) {
       _v.copy(st.look).sub(st.pos);
       ly = Math.atan2(_v.x, _v.z) - st.yaw; ly = Math.atan2(Math.sin(ly), Math.cos(ly));
-      ly = THREE.MathUtils.clamp(ly, -1.1, 1.1);
+      ly = THREE.MathUtils.clamp(ly, -1.5, 1.5);
       lp = THREE.MathUtils.clamp(-Math.atan2(_v.y - 1.6, Math.hypot(_v.x, _v.z)), -0.6, 0.6);
     } else if (this.fidget === 'look') { ly = Math.sin(this.t * 0.7 + this.seed) * 0.8 * this.fidgetW; lp = Math.sin(this.t * 0.45) * 0.15 * this.fidgetW; }
     // talking: little nods and head tilts with the phrasing
     const nod = this.talking * (Math.sin(this.t * 5.1 + this.seed) * 0.05 + Math.sin(this.t * 1.7) * 0.04);
     const tilt = this.talking * Math.sin(this.t * 0.9 + this.seed) * 0.06 + (this.fidget === 'scratch' ? 0.15 * this.fidgetW : 0);
     // the head stays level against the walking bob and the shoulder twist
-    B.neck.quaternion.copy(E(lp * 0.4 + nod * 0.5 - run * 0.08, ly * 0.4 + sw * 0.05 * Math.min(1, speed), tilt * 0.5));
-    B.head.quaternion.copy(E(lp * 0.6 + this.eat * 0.15 + nod - run * 0.06, ly * 0.6, tilt * 0.5));
+    B.neck.quaternion.copy(E(lp * 0.4 + nod * 0.5 - run * 0.08, ly * 0.3 + sw * 0.05 * Math.min(1, speed), tilt * 0.5));
+    B.head.quaternion.copy(E(lp * 0.6 + this.eat * 0.15 + nod - run * 0.06, ly * 0.45, tilt * 0.5));
+    // a long look round brings the shoulders with it
+    if (ly) B.chest.quaternion.multiply(E(0, ly * 0.28, 0));
     // talking gestures: every second or so a new hand shape (open palm out, a point, a shrug)
     if (this.talking > 0.05) {
       this.gestT -= dt;
@@ -459,16 +473,23 @@ export class BipedAnimator {
       home.y = this.ground(home.x, home.z);
       if (this.init) { this.planted[i].copy(home); }
       const lp = moving ? (this.phase + (i === 0 ? 0 : 0.5)) % 1 : 1;
-      const duty = 0.6 - run * 0.18;
+      const duty = duty0;
       let F: THREE.Vector3;
       if (moving && lp > duty) {
         const sp = (lp - duty) / (1 - duty);
         if (!this.swinging[i]) { this.swinging[i] = true; this.from[i].copy(this.planted[i]); }
-        const stride = speed / Math.max(freq, 0.1) * duty * 0.5;
+        // a walker lands the foot well ahead; a runner lands it nearly under the hips and pushes off behind
+        const stride = speed / Math.max(freq, 0.1) * duty * (0.5 - run * 0.18);
         this.to[i].set(home.x + Math.sin(st.yaw) * stride, 0, home.z + Math.cos(st.yaw) * stride);
         this.to[i].y = this.ground(this.to[i].x, this.to[i].z);
-        F = this.from[i].clone().lerp(this.to[i], sp * sp * (3 - 2 * sp));
-        F.y += Math.sin(sp * Math.PI) * (0.1 + run * 0.15);
+        // running: the heel kicks up behind first, then the knee drives through and the foot reaches
+        // forward and comes down; walking: a low, even arc
+        const pe = Math.pow(sp, 1 - run * 0.15);
+        F = this.from[i].clone().lerp(this.to[i], pe * pe * (3 - 2 * pe));
+        // a runner's recovering foot folds up under the seat rather than trailing out behind
+        const tuck = run * 0.45 * Math.sin(Math.min(1, sp * 1.4) * Math.PI);
+        F.x += (home.x - F.x) * tuck; F.z += (home.z - F.z) * tuck;
+        F.y += Math.sin(Math.pow(sp, 0.8 - run * 0.2) * Math.PI) * (0.1 + run * 0.4);
       } else {
         if (this.swinging[i]) { this.swinging[i] = false; this.planted[i].copy(this.to[i]); }
         if (!moving && this.planted[i].distanceTo(home) > 0.12) this.planted[i].lerp(home, Math.min(1, dt * 5));
@@ -484,7 +505,8 @@ export class BipedAnimator {
       aimBone(thigh, rig.rest[iS].clone().sub(rig.rest[iT]), J.clone().sub(A), this.modelQ);
       aimBone(shin, rig.rest[iF].clone().sub(rig.rest[iS]), ankle.clone().sub(J), this.modelQ);
       foot.parent!.getWorldQuaternion(_qp);
-      const footPitch = moving && lp > duty ? -0.3 * Math.sin(((lp - duty) / (1 - duty)) * Math.PI) : 0;
+      // heel rises before toe-off, the toe points through the swing
+      const footPitch = moving ? (lp > duty ? -(0.3 + run * 0.4) * Math.sin(((lp - duty) / (1 - duty)) * Math.PI) : -0.35 * Math.max(0, (lp - duty * 0.65) / (duty * 0.35))) : 0;
       foot.quaternion.copy(_qp.invert().multiply(this.modelQ).multiply(E(footPitch, 0, 0)));
     }
     this.init = false;

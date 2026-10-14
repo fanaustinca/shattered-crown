@@ -120,6 +120,7 @@ export class Talk {
       } });
     } else if (p.role !== 'guard' && p.role !== 'lord' && p.role !== 'child') o.push({ label: 'Is there anything I can help with?', go: () => this.errand(n) });
     if (p.role === 'stablemaster' || p.role === 'ferryman') o.push({ label: p.role === 'ferryman' ? 'I need passage by boat.' : 'Hire a horse and guide to another town.', go: () => this.travel(n) });
+    if (p.role === 'ferryman') o.push({ label: 'I want a ship of my own.', go: () => this.shipwright(n) });
     if (p.role === 'stablemaster') o.push({ label: 'Buy a horse (60 pennies)', go: () => {
       if (g.interaction.money < 60) return back('Sixty pennies, friend. A good horse is worth every one.');
       g.interaction.money -= 60;
@@ -135,6 +136,25 @@ export class Talk {
     o.push({ label: 'Out of my way, peasant. (Insult)', go: () => { m.liking -= 0.5; if (p.temperament > 0.75 && p.role !== 'child') { n.hostile = true; n.say('Right. You asked for it!', true); return null; } return back(p.role === 'guard' ? 'Watch your tongue, or I\'ll watch it for you from inside a cell.' : pick(['How dare you!', 'Charming. Leave me be.', 'Go boil your head.'])); } });
     o.push({ label: 'Farewell.', go: () => null });
     return { line, options: o };
+  }
+
+  /** The harbour's yard sells three classes of ship, moored off the dock and ready to sail. */
+  private shipwright(n: NPC): DNode {
+    const g = this.game;
+    const back = (l: string) => this.root(n, l);
+    const plan = g.towns.plans.find((pl) => pl.site.dock && Math.hypot(pl.site.x - n.st.pos.x, pl.site.z - n.st.pos.z) < 600);
+    if (!plan) return back('No yard here to build one.');
+    const NAMES = ['Fortune\'s Wake', 'The Wanderer', 'Grey Heron', 'Saltwind', 'Lady Margery', 'The Stubborn Oak', 'Kingfisher', 'Old Reliable'];
+    const offer = [['brigantine', 900, 'A brigantine: two masts, ten guns, quick and handy in the river.'], ['frigate', 3200, 'A frigate: three masts, a covered gun deck, forty guns.'], ['manowar', 9000, 'A man-o\'-war: three gun decks, a hundred guns. Too deep for the river.']] as const;
+    const opts: DOption[] = offer.map(([cls, price, desc]) => ({ label: `${cls === 'manowar' ? 'Man-o\'-war' : cls[0].toUpperCase() + cls.slice(1)} — ${price}d`, go: () => {
+      if (g.interaction.money < price) return back(`${desc} She'll cost you ${price} pennies — more than you're carrying.`);
+      const sh = g.buyShip(plan, cls, NAMES[Math.floor(Math.random() * NAMES.length)]);
+      if (!sh) return back('There\'s nowhere to moor her.');
+      g.interaction.money -= price;
+      return back(`${desc} She's yours — the ${sh.name_}, riding at anchor off the end of the quay. Take the boat out to her; E at the wheel.`);
+    } }));
+    opts.push({ label: 'Just looking.', go: () => back('Dreaming costs nothing. Ships cost plenty.') });
+    return { line: 'Built in this very yard, seasoned oak and Ironspire iron. What\'ll it be?', options: opts };
   }
 
   /** Fast travel: a hired horse and guide (any town with a stable yard) or a boat between the ports. */
