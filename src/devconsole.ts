@@ -19,12 +19,15 @@ export function installDevConsole(game: Game) {
     return new THREE.Vector3(x, g.groundAt(x, z, p.y + 2), z);
   };
   /** nearest open water (sea or river) to the player, searching outward */
-  const water = () => {
+  const water = (need = 2.5) => {
     const p = g.player.pos;
-    for (let r = 8; r < 2500; r += 8) for (let a = 0; a < 24; a++) {
+    for (let r = 8; r < 4000; r += 8) for (let a = 0; a < 24; a++) {
       const x = p.x + Math.cos((a / 24) * Math.PI * 2) * r, z = p.z + Math.sin((a / 24) * Math.PI * 2) * r;
       const wl = g.world.waterLevelAt(x, z), h = g.world.heightAt(x, z);
-      if (wl - h > 2.5) return new THREE.Vector3(x, wl, z);
+      // room all round for the hull, not just under the keel
+      let ok = wl - h > need;
+      for (let k = 0; ok && k < 8; k++) { const xx = x + Math.cos(k * 0.785) * need * 4, zz = z + Math.sin(k * 0.785) * need * 4; ok = g.world.waterLevelAt(xx, zz) - g.world.heightAt(xx, zz) > need * 0.8; }
+      if (ok) return new THREE.Vector3(x, wl, z);
     }
     return null;
   };
@@ -48,6 +51,8 @@ export function installDevConsole(game: Game) {
       g.carts.push(new Cart(g, p, g.player.yaw + Math.PI / 2, Math.floor(Math.random() * 10)));
       return say('A cart rolls up. Hitch a horse or donkey to it (E at the shafts).');
     },
+    /** two squadrons engaging offshore, nearest the coast you're on */
+    fleet: () => { const c = g.naval.startBattle(); return say(`The fleets meet about ${Math.round(c.distanceTo(g.player.pos))} m out to sea.`); },
     /** a wagon with a team of n horses already in harness */
     team: (n = 2, species: 'horse' | 'donkey' = 'horse') => {
       const p = ahead(9);
@@ -57,12 +62,15 @@ export function installDevConsole(game: Game) {
       for (let i = 0; i < Math.min(4, n); i++) c.hitch(g.spawnAnimal(species, ahead(12 + i * 2, (i % 2 ? 1 : -1))));
       return say(`A wagon with ${Math.min(4, n)} ${species}s in harness. E on the bench to drive.`);
     },
-    ship: (kind: 'ship' | 'boat' = 'ship') => {
-      const w = water();
-      if (!w) return say('No water deep enough nearby.');
-      const s = new Ship(g, w, Math.random() * Math.PI * 2, kind, kind === 'ship' ? 'The Summoned' : 'Skiff');
+    /** spawn.ship('brigantine' | 'frigate' | 'manowar' | 'boat') */
+    ship: (kind: 'brigantine' | 'frigate' | 'manowar' | 'boat' | 'ship' = 'brigantine') => {
+      const cls = kind === 'ship' ? 'brigantine' : kind;
+      const draft = cls === 'manowar' ? 7.5 : cls === 'frigate' ? 5.2 : cls === 'brigantine' ? 3.4 : 1;
+      const w = water(draft);
+      if (!w) return say(`No water deep enough nearby (a ${cls} needs ${draft} m).`);
+      const s = new Ship(g, w, Math.random() * Math.PI * 2, cls, cls === 'boat' ? 'Skiff' : ({ brigantine: 'The Summoned', frigate: 'HMS Resolute', manowar: 'Sovereign of the River' } as Record<string, string>)[cls]);
       g.ships.push(s);
-      return say(`A ${kind} is waiting at ${Math.round(w.distanceTo(g.player.pos))} m.`);
+      return say(`A ${cls === 'manowar' ? "man-o'-war" : cls} is waiting at ${Math.round(w.distanceTo(g.player.pos))} m.`);
     },
     boat: () => spawn.ship('boat'),
     /** soldiers in a block in front of you */
@@ -113,7 +121,9 @@ export function installDevConsole(game: Game) {
         ['spawn.horse(n) / donkey / cow / pig', 'animals in front of you'],
         ['spawn.cart()', 'a wagon (lead a horse to it and press X to hitch; up to 4)'],
         ['spawn.team(n)', 'a wagon with a team of 1–4 horses in harness'],
-        ['spawn.ship() / spawn.boat()', 'a sailing ship / rowing boat on the nearest water'],
+        ["spawn.ship('brigantine' | 'frigate' | 'manowar')", 'a warship on the nearest water deep enough for her'],
+        ['spawn.boat()', 'a rowing boat'],
+        ['spawn.fleet(side)', 'two opposing squadrons for a sea battle nearby'],
         ['spawn.army(side, n)', "soldiers ('vanguardia' | 'ironreach') formed up ahead"],
         ['spawn.column(side, n)', 'a column marching down the nearest road to the front'],
         ['spawn.squad(n)', 'soldiers who follow your orders (2/3/4/5)'],

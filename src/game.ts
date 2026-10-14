@@ -39,6 +39,7 @@ import { VERSION } from './version';
 import { frameStamp, flushBoneAtlas } from './creature/rig';
 import { Music } from './core/music';
 import { Talk } from './npc/talk';
+import { Naval } from './war/naval';
 import { ClothSystem } from './render/cloth';
 
 export type Progress = (f: number, msg: string) => void;
@@ -139,6 +140,7 @@ export class Game {
   frameMs = 16;
   music = new Music();
   talk = new Talk(this);
+  naval = new Naval(this);
   private clothDt = 0;
   cloth!: ClothSystem;
   get clothOn() { return settings.cloth; }
@@ -209,6 +211,7 @@ export class Game {
     this.props.onImpact = (p, speed, at) => this.audio.play(p.def.breakable ? 'impact:ceramic' : p.def.kind === 'weapon' || p.def.id.includes('metal') ? 'impact:metal' : p.def.mass < 0.6 ? 'impact:soft' : 'impact:wood', at, Math.min(1, speed / 6));
     this.props.waterAt = (x, z) => { const wl = this.world.waterLevelAt(x, z); if (wl !== 0) return wl + riverChop(x, z, this.time, waterUniforms.uWaveAmp.value); return this.world.heightAt(x, z) < 0.5 ? seaHeight(x, z, this.time, waterUniforms.uWaveAmp.value) : -Infinity; };
     this.props.currentAt = (x, z) => this.world.currentAt(x, z);
+    this.props.dryAt = (p) => this.ships.some((sh) => sh.contains(p));
     this.props.onSplash = (_p, at, sp) => { this.particles.emit('splash', at, Math.min(14, 3 + Math.round(sp * 2))); this.audio.play('splash', at, Math.min(1, 0.2 + sp * 0.12)); };
     this.props.onBreak = (_p, at) => { this.audio.play('shatter', at, 1); this.particles.emit('dust', at, 6); };
     progress(0.94, 'Carving furniture');
@@ -230,6 +233,8 @@ export class Game {
     this.props.insideAt = (p) => !!this.settlements.inside(p);
     this.props.coldAt = (p) => { const l = this.settlements.inside(p); return !!l && p.y < l.root.position.y + 0.3; };
     this.player = new Player(this.physics, this.world, this.input);
+    this.player.dryAt = (p) => this.ships.some((sh) => sh.contains(p));
+    this.player.clock = () => this.time;
     const start = siteById('aurelhold');
     this.player.spawn(start.x + 8, start.z + 10, Math.PI);
     this.ctx = {
@@ -325,16 +330,39 @@ export class Game {
         }
       }
       for (const d of plan.docks) {
-        if (d.len > 20) {
-          // a merchant ship moored off the dock
+        if (d.len > 30) {
+          // a brigantine moored off the dock, a frigate in the roads, and (Saltmarsh) the fleet's flagship
           const off = new THREE.Vector3(Math.sin(d.yaw), 0, Math.cos(d.yaw));
           const side = new THREE.Vector3(off.z, 0, -off.x);
           const yaw = Math.atan2(-off.z, off.x);
-          const sp = this.deepWater(new THREE.Vector3(d.x, 0, d.z).addScaledVector(off, d.len / 2 - 6).addScaledVector(side, 9), off, yaw, 13, 4.5);
-          this.ships.push(new Ship(this, sp, yaw, 'ship', plan.site.kingdom === 'isles' ? 'The Gull' : 'The Wheat Maiden'));
+          const isles = plan.site.kingdom === 'isles';
+          const moor = (cls: 'brigantine' | 'frigate' | 'manowar', along: number, across: number, name: string) => {
+            const L = { brigantine: 26, frigate: 44, manowar: 58 }[cls], dr = { brigantine: 2.9, frigate: 4.6, manowar: 6.8 }[cls];
+            let sp = this.deepWater(new THREE.Vector3(d.x, 0, d.z).addScaledVector(off, along).addScaledVector(side, across), off, yaw, L / 2 + 2, dr + 1.5);
+            // keep clear of ships already at anchor
+            for (let k = 0; k < 12 && this.ships.some((o) => o.kind === 'ship' && o.pos.distanceTo(new THREE.Vector3(sp.x, o.pos.y, sp.z)) < (o.length + L) / 2 + 10); k++) sp = this.deepWater(sp.clone().addScaledVector(side, Math.sign(across || 1) * 35), off, yaw, L / 2 + 2, dr + 1.5);
+            const sh = new Ship(this, sp, yaw, cls, name);
+            sh.side = isles ? null : 'vanguardia';
+            this.ships.push(sh);
+          };
+          moor('brigantine', d.len / 2 - 6, 11, isles ? 'The Gull' : 'The Wheat Maiden');
+          moor('frigate', d.len / 2 + 60, -30, isles ? 'Wavecutter' : 'Resolute');
+          if (!isles) moor('manowar', d.len / 2 + 160, 40, 'Sovereign of Vanguardia');
         }
         const bp = new THREE.Vector3(d.x, 0, d.z).add(new THREE.Vector3(Math.cos(d.yaw) * 3.5, 0, -Math.sin(d.yaw) * 3.5));
         this.ships.push(new Ship(this, bp, d.yaw, 'boat', 'Rowing boat'));
+      }
+    }
+    // the Ironreach squadron rides at anchor off the eastern coast
+    {
+      const a = 0.25, base = new THREE.Vector3(Math.cos(a) * 2600, 0, Math.sin(a) * 2600), out = base.clone().normalize();
+      const yaw = Math.atan2(-out.z, out.x) + Math.PI / 2;
+      for (const [cls, k, name] of [['manowar', 0, 'Iron Wrath'], ['frigate', 1, 'Blackcrag'], ['brigantine', 2, 'The Raven']] as const) {
+        const L = { brigantine: 26, frigate: 44, manowar: 58 }[cls], dr = { brigantine: 2.9, frigate: 4.6, manowar: 6.8 }[cls];
+        const p0 = base.clone().add(new THREE.Vector3(-out.z, 0, out.x).multiplyScalar((k - 1) * 90));
+        const sh = new Ship(this, this.deepWater(p0, out, yaw, L / 2 + 2, dr + 1.5), yaw, cls, name);
+        sh.side = 'ironreach';
+        this.ships.push(sh);
       }
     }
     // a boat at each bridge camp too
@@ -348,10 +376,10 @@ export class Game {
   deepWater(p: THREE.Vector3, dir: THREE.Vector3, yaw: number, halfLen: number, depth: number) {
     const ax = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw), sd = new THREE.Vector3(-ax.z, 0, ax.x);
     const q = p.clone();
-    for (let k = 0; k < 120; k++) {
+    for (let k = 0; k < 500; k++) {
       let ok = true;
       for (const u of [-1, -0.5, 0, 0.5, 1]) for (const v of [-1, 1]) {
-        const x = q.x + ax.x * u * halfLen + sd.x * v * 3, z = q.z + ax.z * u * halfLen + sd.z * v * 3;
+        const x = q.x + ax.x * u * halfLen + sd.x * v * Math.max(3, halfLen * 0.25), z = q.z + ax.z * u * halfLen + sd.z * v * Math.max(3, halfLen * 0.25);
         if (this.world.waterLevelAt(x, z) - this.world.heightAt(x, z) < depth) { ok = false; break; }
       }
       if (ok) return q;
@@ -415,6 +443,7 @@ export class Game {
     this.fauna.step(aiDt);
     this.residents.step(aiDt);
     this.talk.update(aiDt);
+    this.naval.update(aiDt);
     this.war.step(aiDt);
     this.mark('ai');
     this.physics.update(simDt);
@@ -617,6 +646,23 @@ export class Game {
     const night = 1 - this.lighting.dayFactor;
     const lights = this.settlements.lights(this.camera.position, night);
     for (const c of this.campfires) lights.push({ pos: c, intensity: 16, range: 14, color: new THREE.Color(1, 0.55, 0.25) });
+    // the sea is not drawn inside the nearest hulls
+    {
+      const near = this.ships.filter((sh) => sh.plan).sort((a, b) => a.root.position.distanceToSquared(this.camera.position) - b.root.position.distanceToSquared(this.camera.position)).slice(0, 4);
+      const wu = waterUniforms;
+      for (let i = 0; i < 4; i++) {
+        const sh = near[i];
+        if (!sh || sh.root.position.distanceTo(this.camera.position) > 600) { wu.uHullDim.value[i].w = 0; continue; }
+        sh.root.updateMatrixWorld();
+        wu.uHullInv.value[i].copy(sh.root.matrixWorld).invert();
+        wu.uHullDim.value[i].set(sh.length / 2, sh.beam / 2, sh.plan!.deckY + 0.3, 1);
+      }
+    }
+    // ships' lanterns: on the stern at night, and always below decks where no daylight reaches
+    for (const sh of this.ships) {
+      if (!sh.lamps.length || sh.root.position.distanceToSquared(this.camera.position) > 140 * 140) continue;
+      for (const lp of sh.lamps) { const w = lp.clone().applyMatrix4(sh.root.matrixWorld); if (w.y < sh.root.position.y + sh.deckY + 0.5 || night > 0.3) lights.push({ pos: w, intensity: 7, range: 9, color: new THREE.Color(1, 0.62, 0.3) }); }
+    }
     this.lightPool.assign(lights, this.camera.position, this.time);
     // hearth flames in nearby homes
     if (this.frameNo % 3 === 0) for (const l of this.settlements.live.values()) {
@@ -658,7 +704,7 @@ export class Game {
       root.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh && !m.userData.noShadow) m.castShadow = cast; });
     };
     for (const c of this.carts) set(c.root, 3);
-    for (const s of this.ships) set(s.root, s.kind === 'ship' ? 9 : 3);
+    for (const s of this.ships) set(s.root, s.kind === 'ship' ? s.length * 0.35 : 3);
   }
 
   /** Feet, hooves and wheels that push the grass aside. */

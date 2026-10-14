@@ -53,6 +53,10 @@ export class Player {
   fallStartY = 0;
   inWater = 0;           // depth of water at the feet
   underwater = false;
+  /** set by the game: true where water can't reach (inside a ship's hull) */
+  dryAt: ((p: THREE.Vector3) => boolean) | null = null;
+  /** the game clock the waves run on */
+  clock: (() => number) | null = null;
   waterY = -1e9;
   sprinting = false;
   noise = 0;             // how loud the player is (for guards)
@@ -176,7 +180,9 @@ export class Player {
     const t = this.collider.translation();
     const feet = t.y - HALF - RADIUS;
     let wl = this.world.waterLevelAt(t.x, t.z);
-    if (wl === 0) wl = seaHeight(t.x, t.z, performance.now() / 1000, waterUniforms.uWaveAmp.value) * 0.6;
+    if (wl === 0) wl = seaHeight(t.x, t.z, this.clock?.() ?? performance.now() / 1000, waterUniforms.uWaveAmp.value);
+    // inside a ship's hull the sea is on the other side of the planks
+    if (this.dryAt?.(new THREE.Vector3(t.x, feet + 0.3, t.z))) wl = -1e9;
     this.waterY = wl;
     this.inWater = Math.max(0, wl - feet);
     const enc = Math.max(0, Math.min(1, this.carryWeight / this.maxCarry));

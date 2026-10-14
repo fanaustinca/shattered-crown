@@ -19,6 +19,10 @@ export const WAVES: [number, number, number, number][] = [
 export const SWELLS: [number, number, number, number][] = [[1.0, 0.12, 0.07, 150], [0.75, 0.66, 0.055, 96], [0.95, -0.3, 0.045, 62]];
 
 export const waterUniforms = {
+  /** up to four hulls near the camera: water is not drawn inside them (world->ship matrices, and
+   *  half-length, half-beam, side height, active) */
+  uHullInv: { value: [0, 1, 2, 3].map(() => new THREE.Matrix4()) },
+  uHullDim: { value: [0, 1, 2, 3].map(() => new THREE.Vector4()) },
   uSwell: { value: 0.3 },        // swell height (wind strength and duration)
   uWaveAmp: { value: 0.7 },      // overall sea state (weather)
   uWaveRot: { value: 0 },        // the swell turns to run with the wind
@@ -164,6 +168,19 @@ varying vec3 vNormalW;
 varying float vKind;
 varying vec2 vFlow;
 varying float vCrest;
+uniform mat4 uHullInv[4]; uniform vec4 uHullDim[4];
+bool insideHull(vec3 w) {
+  for (int i = 0; i < 4; i++) {
+    vec4 d = uHullDim[i];
+    if (d.w < 0.5) continue;
+    vec3 l = (uHullInv[i] * vec4(w, 1.0)).xyz;
+    if (abs(l.x) > d.x || l.y > d.z || l.y < 0.0) continue;
+    float xn = l.x / d.x;
+    float pf = xn > 0.0 ? sqrt(max(0.0, 1.0 - pow(xn, 2.3))) : 1.0 - pow(-xn, 3.4) * 0.38;
+    if (abs(l.z) < d.y * pf * 0.97) return true;
+  }
+  return false;
+}
 varying vec4 vClip;
 
 float linDepth(float zNdc) { return (2.0 * uCamNear * uCamFar) / (uCamFar + uCamNear - zNdc * (uCamFar - uCamNear)); }
@@ -208,6 +225,7 @@ vec3 ripples(vec2 p) {
 }
 
 void main() {
+  if (vKind < 0.5 && insideHull(vWorld)) discard;
   vec2 suv = gl_FragCoord.xy / uResolution;
   vec3 V = normalize(cameraPosition - vWorld);
   float dist = length(cameraPosition - vWorld);

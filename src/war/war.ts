@@ -62,7 +62,7 @@ class CannonSeat implements Seat, Interactable {
 export class War {
   soldiers: Soldier[] = [];
   cannons: Cannon[] = [];
-  balls: { body: RAPIER.RigidBody; mesh: THREE.Mesh; t: number; side: Side; byPlayer: boolean }[] = [];
+  balls: { body: RAPIER.RigidBody; mesh: THREE.Mesh; t: number; side: Side; byPlayer: boolean; ship?: unknown; prev?: THREE.Vector3 }[] = [];
   camps: { bridge: Bridge; side: Side; pos: THREE.Vector3 }[] = [];
   enlisted: Side | null = null;
   waveT = 30;
@@ -220,11 +220,25 @@ export class War {
     g.particles.emit('spark', muzzle, 30);
     g.sound?.('cannon', muzzle, 2);
     if (c.pos.distanceTo(g.camera.position) < 60) g.shake = Math.max(g.shake, 0.6 * (1 - c.pos.distanceTo(g.camera.position) / 60));
-    const body = g.physics.world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(muzzle.x, muzzle.y, muzzle.z).setLinvel(dir.x * 110, dir.y * 110, dir.z * 110).setCcdEnabled(true));
-    g.physics.world.createCollider(RAPIER.ColliderDesc.ball(0.06).setMass(6).setCollisionGroups(groups(G_PROP, ALL)), body);
-    const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.06, 10, 8), new THREE.MeshStandardMaterial({ color: 0x222222, metalness: 0.8, roughness: 0.5 }));
+    this.fireBall(muzzle, dir, 110, c.side, byPlayer, null, true);
+  }
+  private ballGeo = new THREE.SphereGeometry(0.075, 10, 8);
+  private ballMat = new THREE.MeshStandardMaterial({ color: 0x222222, metalness: 0.8, roughness: 0.5 });
+  /** A round shot from any gun (field pieces, ships' broadsides). */
+  fireBall(muzzle: THREE.Vector3, dir: THREE.Vector3, speed: number, side: Side, byPlayer: boolean, ship: unknown = null, quiet = false) {
+    const g = this.game;
+    if (!quiet) {
+      g.particles.emit('cannon', muzzle, 26, dir);
+      g.particles.emit('spark', muzzle, 14);
+      g.sound?.('cannon', muzzle, 1.6);
+      const dc = muzzle.distanceTo(g.camera.position);
+      if (dc < 80) g.shake = Math.max(g.shake, 0.45 * (1 - dc / 80));
+    }
+    const body = g.physics.world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(muzzle.x, muzzle.y, muzzle.z).setLinvel(dir.x * speed, dir.y * speed, dir.z * speed).setCcdEnabled(true));
+    g.physics.world.createCollider(RAPIER.ColliderDesc.ball(0.075).setMass(6).setCollisionGroups(groups(G_PROP, ALL)), body);
+    const mesh = new THREE.Mesh(this.ballGeo, this.ballMat);
     this.group.add(mesh);
-    this.balls.push({ body, mesh, t: 0, side: c.side, byPlayer });
+    this.balls.push({ body, mesh, t: 0, side, byPlayer, ship, prev: muzzle.clone() });
   }
 
   enlist(side: Kingdom) {
@@ -290,7 +304,8 @@ export class War {
       const slow = Math.hypot(v.x, v.y, v.z) < 25 && b.t > 0.2;
       const water = pos.y < g.world.waterLevelAt(pos.x, pos.z);
       if (slow || water || b.t > 12) {
-        if (b.t < 12) {
+        const onShip = b.t < 12 && g.naval.hit(pos, (b.ship as never) ?? null, b.byPlayer);
+        if (b.t < 12 && !onShip) {
           g.particles.emit(water ? 'splash' : 'dust', pos, water ? 40 : 30);
           if (!water) { g.particles.emit('smoke', pos, 12); g.particles.emit('mud', pos, 20); }
           g.sound?.(water ? 'splash' : 'impact:wood', pos, 1.5);

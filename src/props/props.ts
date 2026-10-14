@@ -73,11 +73,12 @@ export class PropManager {
   /** river current at (x,z) */
   currentAt: ((x: number, z: number) => [number, number]) | null = null;
   onSplash: ((p: Prop, at: THREE.Vector3, speed: number) => void) | null = null;
+  dryAt: ((p: THREE.Vector3) => boolean) | null = null;
   constructor(public phys: Physics, public scene: THREE.Scene, public ground: (x: number, z: number) => number) {
     scene.add(this.group);
   }
   /** Every model the world uses: item meshes plus the big set pieces (ships, cannons). */
-  async preloadAll() { await preload([...new Set([...Object.values(ITEMS).map((d) => d.glb).filter(Boolean) as string[], 'dutch_ship_medium', 'cannon_01'])]); }
+  async preloadAll() { await preload([...new Set([...Object.values(ITEMS).map((d) => d.glb).filter(Boolean) as string[], 'cannon_01'])]); }
 
   spawn(id: string, pos: THREE.Vector3, quat?: THREE.Quaternion, opts: { owner?: string | null; sleep?: boolean; vel?: THREE.Vector3 } = {}): Prop | null {
     const def = ITEMS[id];
@@ -309,7 +310,8 @@ export class PropManager {
     const wl = this.waterAt!(pos.x, pos.z);
     const bb = p.bbox, h = Math.max(0.04, bb.max.y - bb.min.y);
     const half = h / 2;
-    const sub = THREE.MathUtils.clamp((wl - (pos.y - half)) / h, 0, 1);
+    let sub = THREE.MathUtils.clamp((wl - (pos.y - half)) / h, 0, 1);
+    if (sub > 0 && this.dryAt?.(pos)) sub = 0;
     const was = (p as Prop & { wet?: number }).wet ?? 0;
     (p as Prop & { wet?: number }).wet = sub;
     if (sub <= 0) return;
