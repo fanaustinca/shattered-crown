@@ -204,53 +204,212 @@ export class World {
     }
   }
 
+  /** Soften impossible walls. Two slope-limited versions of the terrain are made with a chamfer distance
+   *  transform (forward and backward raster passes): one cut down from above (crags lowered until no face
+   *  is steeper than ~50°) and one filled up from below (a scree skirt at the foot of every cliff). Their
+   *  average keeps half of every mountain's height and spreads the rest into its foot, and — being an
+   *  average of two fields that both obey the limit — obeys it too. River channels and the sea floor only
+   *  ever take the cut version, so no bank is filled in. */
+  private limitSlopes() {
+    const N = HM_N, H = this.heights, lim = CELL * Math.tan((50 * Math.PI) / 180), lim2 = lim * Math.SQRT2;
+    const cut = new Float32Array(H), fill = new Float32Array(H);
+    const pass = (A: Float32Array, sign: 1 | -1) => {
+      // sign 1: A = min(A, A[n] + lim·d) (cut); sign -1: A = max(A, A[n] - lim·d) (fill)
+      const relax = (q: number, n: number, d: number) => { const v = A[n] + sign * d; if (sign > 0 ? v < A[q] : v > A[q]) A[q] = v; };
+      for (let j = 1; j < N - 1; j++) for (let i = 1; i < N - 1; i++) { const q = j * N + i; relax(q, q - 1, lim); relax(q, q - N, lim); relax(q, q - N - 1, lim2); relax(q, q - N + 1, lim2); }
+      for (let j = N - 2; j >= 1; j--) for (let i = N - 2; i >= 1; i--) { const q = j * N + i; relax(q, q + 1, lim); relax(q, q + N, lim); relax(q, q + N + 1, lim2); relax(q, q + N - 1, lim2); }
+    };
+    pass(cut, 1); pass(cut, 1);
+    pass(fill, -1); pass(fill, -1);
+    for (let q = 0; q < N * N; q++) {
+      const wet = this.ctrlB[q * 4 + 2] > 20 || this.ctrlB[q * 4 + 1] > 10;
+      H[q] = wet ? cut[q] : (cut[q] + fill[q]) * 0.5;
+    }
+  }
+
+  /** A* over the heightmap between two points for a road with a ruling grade: steep ground is crossed on
+   *  the slant and climbed in zig-zags, water is avoided. Returns null if no sensible route. */
+  private routeGraded(a: [number, number], b: [number, number], maxG: number): [number, number][] | null {
+    const G = 6, dist = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const margin = Math.max(400, dist * 0.7);
+    const x0 = Math.min(a[0], b[0]) - margin, z0 = Math.min(a[1], b[1]) - margin;
+    const nx = Math.ceil((Math.max(a[0], b[0]) + margin - x0) / G), nz = Math.ceil((Math.max(a[1], b[1]) + margin - z0) / G);
+    const hgt = new Float32Array(nx * nz), wet = new Uint8Array(nx * nz);
+    for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
+      const x = x0 + i * G, z = z0 + j * G, h = this.heightAt(x, z);
+      hgt[j * nx + i] = h; wet[j * nx + i] = this.waterLevelAt(x, z) > h - 0.4 ? 1 : 0;
+    }
+    const idx = (x: number, z: number) => Math.round((z - z0) / G) * nx + Math.round((x - x0) / G);
+    const sA = idx(a[0], a[1]), sB = idx(b[0], b[1]);
+    const gScore = new Float64Array(nx * nz).fill(Infinity), from = new Int32Array(nx * nz).fill(-1), closed = new Uint8Array(nx * nz);
+    const heap: number[] = [], hf: number[] = [];
+    const push = (n: number, f: number) => { heap.push(n); hf.push(f); let k = heap.length - 1; while (k > 0) { const p = (k - 1) >> 1; if (hf[p] <= hf[k]) break; [heap[p], heap[k]] = [heap[k], heap[p]]; [hf[p], hf[k]] = [hf[k], hf[p]]; k = p; } };
+    const pop = () => { const top = heap[0]; const ln = heap.pop()!, lf = hf.pop()!; if (heap.length) { heap[0] = ln; hf[0] = lf; let k = 0; for (;;) { const l = 2 * k + 1, r = l + 1; let m = k; if (l < heap.length && hf[l] < hf[m]) m = l; if (r < heap.length && hf[r] < hf[m]) m = r; if (m === k) break; [heap[m], heap[k]] = [heap[k], heap[m]]; [hf[m], hf[k]] = [hf[k], hf[m]]; k = m; } } return top; };
+    const bi = sB % nx, bj = (sB - bi) / nx;
+    const hcost = (n: number) => { const i = n % nx, j = (n - i) / nx; return Math.hypot(i - bi, j - bj) * G; };
+    const moves: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1], [2, 1], [2, -1], [-2, 1], [-2, -1], [1, 2], [1, -2], [-1, 2], [-1, -2]];
+    gScore[sA] = 0; push(sA, hcost(sA));
+    let found = false, iter = 0;
+    while (heap.length && iter++ < 1500000) {
+      const n = pop();
+      if (n === sB) { found = true; break; }
+      if (closed[n]) continue;
+      closed[n] = 1;
+      const i = n % nx, j = (n - i) / nx, g0 = gScore[n];
+      for (const [di, dj] of moves) {
+        const ii = i + di, jj = j + dj;
+        if (ii < 0 || jj < 0 || ii >= nx || jj >= nz) continue;
+        const m = jj * nx + ii;
+        const len = Math.hypot(di, dj) * G, grade = Math.abs(hgt[m] - hgt[n]) / len;
+        let c = len * (1 + 20 * grade * grade);
+        if (grade > maxG) c *= 1 + 120 * (grade - maxG);
+        if (grade > maxG * 2.2) c += 4000;          // a cliff: practically impassable
+        if (wet[m] && m !== sB) c += 2000;
+        const ng = g0 + c;
+        if (ng < gScore[m]) { gScore[m] = ng; from[m] = n; push(m, ng + hcost(m)); }
+      }
+    }
+    this.genTimes.lastIter = iter; this.genTimes.lastFound = found ? 1 : 0; this.genTimes.lastNodes = nx * nz; this.genTimes.lastHeap = heap.length;
+    if (!found) return null;
+    const out: [number, number][] = [];
+    for (let n = sB; n !== -1; n = from[n]) { const i = n % nx, j = (n - i) / nx; out.push([x0 + i * G, z0 + j * G]); }
+    out.reverse();
+    out[0] = [a[0], a[1]]; out[out.length - 1] = [b[0], b[1]];
+    // round the corners (Chaikin), keeping the ends
+    let pts = out;
+    for (let k = 0; k < 3; k++) {
+      const q: [number, number][] = [pts[0]];
+      for (let t = 0; t < pts.length - 1; t++) { const [ax, az] = pts[t], [bx, bz] = pts[t + 1]; q.push([ax * 0.75 + bx * 0.25, az * 0.75 + bz * 0.25], [ax * 0.25 + bx * 0.75, az * 0.25 + bz * 0.75]); }
+      q.push(pts[pts.length - 1]); pts = q;
+    }
+    return pts;
+  }
+
+  /** Mountain trails: a dirt path from the nearest road up to every big summit (and on over the saddle), so
+   *  no mountain is a wall — the grade is held to about one in two (~25°). */
+  private mountainTrails(): { pts: [number, number][]; kind: 'track' }[] {
+    const peaks: [number, number, number][] = [];
+    const step = 60, N = Math.floor((HALF * 2) / step);
+    for (let j = 2; j < N - 2; j++) for (let i = 2; i < N - 2; i++) {
+      const x = -HALF + i * step, z = -HALF + j * step, h = this.heightAt(x, z);
+      if (h < 110 || this.waterLevelAt(x, z) > h) continue;
+      let top = true;
+      for (let dj = -6; dj <= 6 && top; dj++) for (let di = -6; di <= 6; di++) { if (!di && !dj) continue; if (this.heightAt(x + di * step, z + dj * step) > h) { top = false; break; } }
+      if (top && !SITES.some((s) => Math.hypot(s.x - x, s.z - z) < s.r + 80)) peaks.push([x, z, h]);
+    }
+    peaks.sort((a, b) => b[2] - a[2]);
+    const out: { pts: [number, number][]; kind: 'track' }[] = [];
+    for (const [px, pz] of peaks.slice(0, 10)) {
+      // join the nearest road
+      let best: [number, number] | null = null, bd = 1e9;
+      for (const r of this.roads) for (let k = 0; k < r.pts.length; k += 15) { const d = Math.hypot(r.pts[k] - px, r.pts[k + 1] - pz); if (d < bd) { bd = d; best = [r.pts[k], r.pts[k + 1]]; } }
+      if (!best || bd > 2600) continue;
+      out.push({ pts: [best, [px, pz]], kind: 'track' });
+    }
+    return out;
+  }
+
+  genTimes: Record<string, number> = {};
   private buildRoads() {
+    let t0 = performance.now();
+    this.limitSlopes();
+    this.genTimes.slopes = performance.now() - t0; t0 = performance.now();
+    const plans: { pts: [number, number][]; kind: 'road' | 'track'; routed?: boolean }[] = [];
     for (const r of ROADS) {
       const ctrl = r.pts.map((p) => resolveRoadPt(p, this.bridges));
-      // Catmull-Rom through the waypoints, then add gentle wiggle so roads don't look ruled
-      const pts: number[] = [];
-      for (let s = 0; s < ctrl.length - 1; s++) {
-        const p0 = ctrl[Math.max(0, s - 1)], p1 = ctrl[s], p2 = ctrl[s + 1], p3 = ctrl[Math.min(ctrl.length - 1, s + 2)];
+      // a road meets a bridge square on: pin an approach point out along the bridge axis
+      const pinned = new Set<number>();
+      const ctl: [number, number][] = [];
+      r.pts.forEach((p, k) => {
+        const c = ctrl[k];
+        if (typeof p === 'string' && p.startsWith('B')) {
+          const b = this.bridges[+p[1]], ax = Math.cos(b.yaw), az = -Math.sin(b.yaw);
+          const sg = Math.sign((c[0] - b.x) * ax + (c[1] - b.z) * az) || 1;
+          const app: [number, number] = [c[0] + ax * sg * 30, c[1] + az * sg * 30];
+          if (k === 0) { ctl.push(c, app); pinned.add(0); }
+          else { ctl.push(app, c); pinned.add(ctl.length - 2); }
+        } else ctl.push(c);
+      });
+      const maxG = r.kind === 'road' ? 0.11 : 0.18;
+      const pts: [number, number][] = [];
+      let routed = false;
+      for (let s = 0; s < ctl.length - 1; s++) {
+        const p0 = ctl[Math.max(0, s - 1)], p1 = ctl[s], p2 = ctl[s + 1], p3 = ctl[Math.min(ctl.length - 1, s + 2)];
         const len = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
         const n = Math.max(2, Math.ceil(len / 2));
+        const seg: [number, number][] = [];
         for (let k = 0; k < n; k++) {
           const t = k / n, t2 = t * t, t3 = t2 * t;
           const cr = (a: number, b: number, c: number, d: number) => 0.5 * ((2 * b) + (-a + c) * t + (2 * a - 5 * b + 4 * c - d) * t2 + (-a + 3 * b - 3 * c + d) * t3);
           let x = cr(p0[0], p1[0], p2[0], p3[0]), z = cr(p0[1], p1[1], p2[1], p3[1]);
-          const wig = Math.sin(Math.PI * t) * 1; // keep endpoints exact
+          const wig = pinned.has(s) ? 0 : Math.sin(Math.PI * t) * 1;
           x += wig * 9 * this.noise.noise(x / 140, z / 140); z += wig * 9 * this.noise.noise(z / 140 + 5, x / 140);
-          pts.push(x, z, 0);
+          seg.push([x, z]);
         }
-      }
-      const last = ctrl[ctrl.length - 1]; pts.push(last[0], last[1], 0);
-      const n = pts.length / 3;
-      // height profile: sample, then smooth along the road so grades are drivable
-      const raw = new Float32Array(n);
-      for (let k = 0; k < n; k++) raw[k] = this.heightAt(pts[k * 3], pts[k * 3 + 1]);
-      for (let k = 0; k < n; k++) {
-        let acc = 0, wsum = 0;
-        for (let o = -10; o <= 10; o++) {
-          const q = clamp(k + o, 0, n - 1), w = 1 - Math.abs(o) / 11;
-          acc += raw[q] * w; wsum += w;
+        // too steep for carts? find a graded line instead (switchbacks up the mountainside)
+        let steep = false;
+        for (let k = 0; k + 15 < seg.length && !steep; k += 5) {
+          const a = seg[k], b = seg[k + 15];
+          steep = Math.abs(this.heightAt(b[0], b[1]) - this.heightAt(a[0], a[1])) / Math.max(1, Math.hypot(b[0] - a[0], b[1] - a[1])) > maxG * 1.35;
         }
-        pts[k * 3 + 2] = acc / wsum;
+        if (steep && !pinned.has(s)) {
+          const alt = this.routeGraded(p1, p2, maxG);
+          if (alt) { alt.pop(); pts.push(...alt); routed = true; continue; }
+        }
+        pts.push(...seg);
       }
-      const arr = new Float32Array(pts);
-      const width = r.kind === 'road' ? 6.5 : 3.6;
-      this.roads.push({ kind: r.kind, pts: arr, width });
-      // rasterise: flatten across the road and paint the road channel
-      const hw = width / 2, fall = width * 1.6;
-      for (let k = 0; k < n; k++) {
-        const x = arr[k * 3], z = arr[k * 3 + 1], y = arr[k * 3 + 2];
-        this.paint(x, z, hw + fall, (q, d) => {
-          if (this.ctrlB[q * 4 + 1] > 10) return; // never fill the river (bridges span it)
-          const wRoad = 1 - smoothstep(hw - 0.8, hw + 0.8, d);
-          const wFlat = 1 - smoothstep(hw, hw + fall, d);
-          const cur = this.ctrlA[q * 4] / 255;
-          if (wFlat > 0.001) this.heights[q] += (y - 0.12 * wRoad - this.heights[q]) * wFlat * 0.85;
-          if (wRoad > cur) this.ctrlA[q * 4] = Math.round(wRoad * (r.kind === 'road' ? 255 : 200));
-        });
+      pts.push(ctl[ctl.length - 1]);
+      plans.push({ pts, kind: r.kind, routed });
+    }
+    this.genTimes.route = performance.now() - t0; t0 = performance.now();
+    for (const pl of plans) this.layRoad(pl.pts, pl.kind);
+    // and a dirt trail up every big mountain
+    for (const t of this.mountainTrails()) {
+      const alt = this.routeGraded(t.pts[0], t.pts[1], 0.42);
+      if (alt) this.layRoad(alt, 'track');
+    }
+    this.genTimes.trails = performance.now() - t0;
+  }
+
+  /** Resample a route every ~2 m, give it a smoothed, graded height profile, and cut it into the ground. */
+  private layRoad(route: [number, number][], kind: 'road' | 'track') {
+    const pts: number[] = [];
+    let carry = 0;
+    for (let k = 0; k < route.length - 1; k++) {
+      const [ax, az] = route[k], [bx, bz] = route[k + 1];
+      const L = Math.hypot(bx - ax, bz - az);
+      let t = carry;
+      while (t < L) { pts.push(ax + (bx - ax) * t / L, az + (bz - az) * t / L, 0); t += 2; }
+      carry = t - L;
+    }
+    const last = route[route.length - 1]; pts.push(last[0], last[1], 0);
+    const n = pts.length / 3;
+    // height profile: sample, then smooth along the road so grades are drivable
+    const raw = new Float32Array(n);
+    for (let k = 0; k < n; k++) raw[k] = this.heightAt(pts[k * 3], pts[k * 3 + 1]);
+    for (let k = 0; k < n; k++) {
+      let acc = 0, wsum = 0;
+      for (let o = -10; o <= 10; o++) {
+        const q = clamp(k + o, 0, n - 1), w = 1 - Math.abs(o) / 11;
+        acc += raw[q] * w; wsum += w;
       }
+      pts[k * 3 + 2] = acc / wsum;
+    }
+    const arr = new Float32Array(pts);
+    const width = kind === 'road' ? 6.5 : 3.6;
+    this.roads.push({ kind, pts: arr, width });
+    // rasterise: flatten across the road and paint the road channel
+    const hw = width / 2, fall = width * 1.6;
+    for (let k = 0; k < n; k++) {
+      const x = arr[k * 3], z = arr[k * 3 + 1], y = arr[k * 3 + 2];
+      this.paint(x, z, hw + fall, (q, d) => {
+        if (this.ctrlB[q * 4 + 1] > 10) return; // never fill the river (bridges span it)
+        const wRoad = 1 - smoothstep(hw - 0.8, hw + 0.8, d);
+        const wFlat = 1 - smoothstep(hw, hw + fall, d);
+        const cur = this.ctrlA[q * 4] / 255;
+        if (wFlat > 0.001) this.heights[q] += (y - 0.12 * wRoad - this.heights[q]) * wFlat * 0.85;
+        if (wRoad > cur) this.ctrlA[q * 4] = Math.round(wRoad * (kind === 'road' ? 255 : 200));
+      });
     }
   }
 

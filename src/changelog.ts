@@ -1,5 +1,19 @@
 // What's new, newest first (shown in Help → What's new).
 export const CHANGELOG: { v: string; date: string; items: string[] }[] = [
+  { v: '0.4.0', date: '2026-10-14', items: [
+    'Walking and running reworked: people walk with a natural vault over the standing leg instead of a hop, at a realistic cadence; runners kick their heels up, drive their knees and have a moment of flight between strides.',
+    'Riding: your body stays square in the saddle and only your head and shoulders turn when you look around.',
+    'Horses are taller and better proportioned: longer legs, a higher, longer neck, a bigger head, a shaped back and a flank that tucks up to the hindquarters; the hind legs fold under the body at the gallop.',
+    'Ship crews work their ships: sailors go about the decks (and use the stairs to the quarterdeck and forecastle), gunners man the guns and soldiers line the rail when the enemy comes up.',
+    'Boarding: captains lay their ships alongside, throw grapples and haul in; the boarders leap across and fight on deck until the enemy strikes her colours and is taken as a prize. At the helm press G to grapple an enemy within 30 m and send your crew over; you can fight on deck yourself.',
+    'Buy your own ship from the shipwright at a harbour (ask the ferryman): brigantine, frigate or man-o\'-war.',
+    'Bigger, wider land battles: about fifty a side in two long ranks, archers loosing volleys from behind, a battery of field guns firing on the enemy foot, and cavalry that waits on the wings and then sweeps round onto the archers. Battles are fought on open ground near the front, not crammed onto the bridge; every man fights the one in front of him, so the lines meet along their whole width.',
+    'Market stalls set out real wares: buy them (R) or snatch them and run. Shop goods have prices too.',
+    'Travel posts outside every town: ride with the post-riders to any other post, coin only — your pack waits in the post\'s strongbox until you come back.',
+    'Mountain roads climb in long switchbacks at a cart-friendly grade (the climb up to Ironspire winds instead of going straight up); every big mountain has a dirt trail to the top; sheer cliffs and spires have been worn down so nothing stands at 80°.',
+    'Town and castle gates now stand exactly where the roads arrive.',
+    'Houses: the gaps at the wall corners you could see inside through are closed (corner posts); the ground in front of doors meets the doorstep so people don\'t get stuck; chairs are drawn up square to the sides of the table; large rooms are fully furnished; no more crates rolling off roofs (they were stored in an attic nobody could reach).',
+  ] },
   { v: '0.3.0', date: '2026-10-13', items: [
     'Three warships built plank by plank: a brigantine, a frigate with an enclosed gun deck, and a three-decker man-o\'-war with about a hundred guns. Each has decks you can walk, hatches and ladders, gun decks, hold, hammocks, and the captain\'s great cabin with a door and stern windows. The man-o\'-war draws too much water for the river.',
     'Broadsides from the helm (Q larboard, R starboard). Sea battles: squadrons of both kingdoms meet offshore; captains close, turn broadside on and fire; shot smashes splinters from the hull, kills men on deck, and enough of it sinks her.',
