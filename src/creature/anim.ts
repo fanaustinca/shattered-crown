@@ -79,26 +79,62 @@ export class QuadAnimator {
   }
   private initFeet = true;
 
+  /** Gait table (speed normalised by leg height). Offsets are where each leg's stance begins in the stride,
+   *  legs ordered FL, FR, HL, HR. Body motion per gait: vertical bob, rocking pitch (nose up > 0) and the
+   *  neck pump, each as amplitude + phase (+ cycles per stride for the bob). */
+  private static GAITS = [
+    // walk: four-beat lateral sequence HL FL HR FR; the head nods down as each fore foot lands
+    { name: 'walk', s0: 0, off: [0.25, 0.75, 0.0, 0.5], duty: 0.66, f0: 0.55, fk: 0.2, bob: 0.018, bobN: 2, bobPh: 0.25, pitch: 0.012, pitchPh: 0.25, neck: 0.07, neckN: 2, neckPh: 0.3, neckBase: 0, headBase: 0, liftF: 0.12, liftH: 0.09, tail: 0 },
+    // trot: diagonal pairs, a springy bounce twice per stride, head steady
+    { name: 'trot', s0: 2.6, off: [0.0, 0.5, 0.5, 0.0], duty: 0.45, f0: 1.1, fk: 0.08, bob: 0.04, bobN: 2, bobPh: 0.32, pitch: 0.01, pitchPh: 0, neck: 0.02, neckN: 2, neckPh: 0.1, neckBase: 0.05, headBase: -0.02, liftF: 0.2, liftH: 0.14, tail: -0.25 },
+    // canter (right lead): HL, then HR+FL together, then FR; the rocking-horse motion
+    { name: 'canter', s0: 5.6, off: [0.3, 0.55, 0.0, 0.3], duty: 0.4, f0: 1.35, fk: 0.05, bob: 0.06, bobN: 1, bobPh: 0.88, pitch: 0.075, pitchPh: 0.12, neck: 0.11, neckN: 1, neckPh: 0.5, neckBase: 0.12, headBase: -0.06, liftF: 0.3, liftH: 0.18, tail: -0.45 },
+    // gallop (transverse, right lead): HL HR FL FR then a moment of suspension with every leg gathered
+    { name: 'gallop', s0: 9.6, off: [0.36, 0.46, 0.0, 0.1], duty: 0.27, f0: 1.75, fk: 0.04, bob: 0.085, bobN: 1, bobPh: 0.86, pitch: 0.1, pitchPh: 0.16, neck: 0.16, neckN: 1, neckPh: 0.5, neckBase: 0.26, headBase: -0.16, liftF: 0.42, liftH: 0.22, tail: -0.6 },
+  ];
+  private gaitOff = [0.25, 0.75, 0.0, 0.5];
+  private gaitName = 'walk';
   private gait(speed: number) {
     const s = speed / Math.max(0.2, this.scale);
-    if (this.hop) return { off: [0.12, 0.12, 0, 0], duty: 0.45, freq: 2.2 + speed * 0.8, bob: 0.25, name: 'hop' };
-    if (s < 1.6) return { off: [0.25, 0.75, 0.0, 0.5], duty: 0.68, freq: 0.9 + s * 0.35, bob: 0.02, name: 'walk' };
-    if (s < 3.6) return { off: [0.0, 0.5, 0.5, 0.0], duty: 0.48, freq: 1.4 + s * 0.12, bob: 0.035, name: 'trot' };
-    if (s < 6.2) return { off: [0.3, 0.55, 0.0, 0.3], duty: 0.42, freq: 1.7 + s * 0.06, bob: 0.06, name: 'canter' };
-    return { off: [0.5, 0.6, 0.0, 0.1], duty: 0.36, freq: 1.9 + s * 0.05, bob: 0.08, name: 'gallop' };
+    if (this.hop) return { off: [0.12, 0.12, 0, 0], duty: 0.45, freq: 2.2 + speed * 0.8, bob: 0.25, bobN: 1, bobPh: 0.5, pitch: 0, pitchPh: 0, neck: 0, neckN: 1, neckPh: 0, neckBase: 0, headBase: 0, liftF: 0.15, liftH: 0.15, tail: 0, name: 'hop', w: 0 };
+    const G = QuadAnimator.GAITS;
+    let i = 0;
+    while (i < G.length - 1 && s > G[i + 1].s0) i++;
+    // blend into the next gait across a short window below its threshold
+    const a = G[i], b = G[Math.min(G.length - 1, i + 1)];
+    const w = b === a ? 0 : THREE.MathUtils.smoothstep(s, b.s0 - 0.7, b.s0);
+    const L = (x: number, y: number) => x + (y - x) * w;
+    const fa = a.f0 + a.fk * s, fb = b.f0 + b.fk * s;
+    return {
+      name: w > 0.5 ? b.name : a.name, w, off: a.off.map((o, k) => { let d = b.off[k] - o; d -= Math.round(d); return (o + d * w + 1) % 1; }),
+      duty: L(a.duty, b.duty), freq: L(fa, fb), bob: L(a.bob, b.bob), bobN: w > 0.5 ? b.bobN : a.bobN, bobPh: L(a.bobPh, b.bobPh),
+      pitch: L(a.pitch, b.pitch), pitchPh: L(a.pitchPh, b.pitchPh), neck: L(a.neck, b.neck), neckN: w > 0.5 ? b.neckN : a.neckN, neckPh: L(a.neckPh, b.neckPh),
+      neckBase: L(a.neckBase, b.neckBase), headBase: L(a.headBase, b.headBase), liftF: L(a.liftF, b.liftF), liftH: L(a.liftH, b.liftH), tail: L(a.tail, b.tail),
+    };
   }
+  /** smoothed per-gait body motion, so starting/stopping and gait changes ease in */
+  private motion = { bob: 0, pitch: 0, neck: 0, neckBase: 0, headBase: 0, tail: 0 };
+  /** the body's pitch and vertical bob this frame (riders feel them) */
+  rock = { pitch: 0, bob: 0, roll: 0 };
 
   update(dt: number, st: MoveState) {
     const rig = this.rig, root = rig.root;
     this.t += dt;
     const speed = st.speed;
-    const g = this.gait(speed);
-    const moving = speed > 0.05;
-    if (moving) this.phase = (this.phase + dt * g.freq) % 1;
+    const g = this.gait(Math.abs(speed));
+    const moving = Math.abs(speed) > 0.05;
+    // leg offsets ease toward the gait's (circularly), so a change of gait never pops the legs
+    for (let k = 0; k < 4; k++) { let d = g.off[k] - this.gaitOff[k]; d -= Math.round(d); this.gaitOff[k] = (this.gaitOff[k] + d * Math.min(1, dt * 4) + 1) % 1; }
+    this.gaitName = g.name;
+    if (moving) this.phase = (this.phase + dt * g.freq * Math.sign(speed)  + 1) % 1;
     const wantGraze = st.action === 'graze' || st.action === 'eat' ? 1 : 0;
     this.graze += (wantGraze - this.graze) * Math.min(1, dt * 2);
     const wantSleep = st.action === 'sleep' || st.action === 'dead' ? 1 : 0;
     this.sleep += (wantSleep - this.sleep) * Math.min(1, dt * 1.2);
+    const mv = this.motion, ease = Math.min(1, dt * 3), on = moving ? 1 : 0;
+    mv.bob += (g.bob * on - mv.bob) * ease; mv.pitch += (g.pitch * on - mv.pitch) * ease; mv.neck += (g.neck * on - mv.neck) * ease;
+    mv.neckBase += (g.neckBase * on - mv.neckBase) * ease; mv.headBase += (g.headBase * on - mv.headBase) * ease; mv.tail += (g.tail * on - mv.tail) * ease;
+    const TAU = Math.PI * 2, ph = this.phase;
 
     // body placement: average the ground under the four hips, pitch to the slope
     const fy = this.ground(st.pos.x + Math.sin(st.yaw) * this.scale * 0.6, st.pos.z + Math.cos(st.yaw) * this.scale * 0.6);
@@ -106,13 +142,18 @@ export class QuadAnimator {
     const pitch = Math.atan2(fy - by, this.scale * 1.2);
     this.bodyPitch += (pitch - this.bodyPitch) * Math.min(1, dt * 6);
     const turnRate = st.turn;
-    this.bodyRoll += ((-turnRate * speed * 0.03) - this.bodyRoll) * Math.min(1, dt * 4);
-    const bob = moving ? -Math.abs(Math.sin(this.phase * Math.PI * 2 * (g.name === 'walk' ? 2 : 1))) * g.bob * this.scale : 0;
-    const breathe = Math.sin(this.t * 1.6) * 0.004 * this.scale;
+    // lean into turns like a running animal does (more at speed)
+    this.bodyRoll += ((-turnRate * Math.abs(speed) * 0.035) - this.bodyRoll) * Math.min(1, dt * 4);
+    // the rocking of the gait: rises in suspension, sinks as the fore legs take the weight; nose up while
+    // the hind legs drive, down as the fore legs land
+    const bob = (Math.cos(TAU * (ph * g.bobN - g.bobPh)) * 0.5 - 0.5) * mv.bob * this.scale * (g.bobN === 2 ? 1 : 1.4);
+    const rockP = Math.cos(TAU * (ph - g.pitchPh)) * mv.pitch;
+    this.rock.pitch = rockP; this.rock.bob = bob; this.rock.roll = this.bodyRoll;
+    const breathe = Math.sin(this.t * (moving ? 3.2 : 1.6)) * (moving ? 0.006 : 0.004) * this.scale;
     const lie = this.sleep * this.scale * 0.55;
     root.position.set(st.pos.x, (fy + by) / 2 + bob + breathe - lie, st.pos.z);
     root.rotation.set(0, st.yaw, 0);
-    root.rotateX(-this.bodyPitch);
+    root.rotateX(-(this.bodyPitch + rockP));
     root.rotateZ(this.bodyRoll);
     root.updateMatrixWorld(true);
     root.getWorldQuaternion(this.modelQ);
@@ -120,27 +161,32 @@ export class QuadAnimator {
     // reset all bone rotations (rest pose) before applying this frame's pose
     for (const b of rig.bones) b.quaternion.identity();
     const B = rig.byName;
-    // spine: bend into turns, flex with gallop
-    const flex = g.name === 'gallop' || g.name === 'hop' ? Math.sin(this.phase * Math.PI * 2) * 0.12 : 0;
+    // spine: bend into turns; in canter/gallop the back rounds as the hind legs come under and lengthens
+    // as they drive
+    const flex = (g.name === 'gallop' || g.name === 'canter' || g.name === 'hop') ? Math.sin(TAU * (ph - 0.1)) * (g.name === 'canter' ? 0.05 : 0.09) * on : 0;
     B.spine.quaternion.setFromEuler(new THREE.Euler(flex, turnRate * 0.12, 0));
-    B.chest.quaternion.setFromEuler(new THREE.Euler(-flex * 0.5, turnRate * 0.12, 0));
-    // neck & head: nod in walk, graze down to the grass, look at things
-    const nod = moving && g.name === 'walk' ? Math.sin(this.phase * Math.PI * 4) * 0.06 : moving ? Math.sin(this.phase * Math.PI * 2) * 0.05 : 0;
+    B.chest.quaternion.setFromEuler(new THREE.Euler(-flex * 0.6, turnRate * 0.12, 0));
+    // neck & head: the neck pumps with the stride (down as the fore legs land), partly cancelling the body's
+    // rock so the eyes stay steadier than the body; at speed the neck stretches out and the nose comes forward
+    const pump = Math.cos(TAU * (ph * g.neckN - g.neckPh)) * mv.neck;
+    const steady = rockP * 0.55;
     const grazeDown = this.graze * (rig.anatomy.id === 'pig' ? 0.5 : 1.0);
     let lookYaw = 0, lookPitch = 0;
-    if (st.look) {
+    if (st.look && !st.ridden) {
       _v.copy(st.look).sub(st.pos);
       lookYaw = THREE.MathUtils.clamp(Math.atan2(_v.x, _v.z) - st.yaw, -1, 1);
       lookYaw = Math.atan2(Math.sin(lookYaw), Math.cos(lookYaw));
       lookPitch = THREE.MathUtils.clamp(Math.atan2(_v.y - 1, Math.hypot(_v.x, _v.z)), -0.4, 0.4);
     }
-    const idleLook = Math.sin(this.t * 0.31) * 0.25 * (moving ? 0.2 : 1) * (1 - this.graze);
+    // a ridden horse looks where it is going (a little into turns)
+    if (st.ridden) lookYaw = THREE.MathUtils.clamp(turnRate * 0.25, -0.4, 0.4);
+    const idleLook = Math.sin(this.t * 0.31) * 0.25 * (moving ? 0.1 : 1) * (1 - this.graze) * (st.ridden ? 0.2 : 1);
     if (B.neck1) {
-      B.neck1.quaternion.setFromEuler(new THREE.Euler(nod + grazeDown * 0.75 - this.sleep * 0.3, (lookYaw + idleLook) * 0.5, 0));
-      B.neck2.quaternion.setFromEuler(new THREE.Euler(nod * 0.5 + grazeDown * 0.55 - lookPitch * 0.5, (lookYaw + idleLook) * 0.4, 0));
-      B.head.quaternion.setFromEuler(new THREE.Euler(-nod * 0.5 + grazeDown * 0.2 - lookPitch * 0.5, (lookYaw + idleLook) * 0.2, 0));
-      // chewing while grazing
-      if (B.jaw) B.jaw.quaternion.setFromEuler(new THREE.Euler(this.graze * Math.max(0, Math.sin(this.t * 7)) * 0.12, 0, 0));
+      B.neck1.quaternion.setFromEuler(new THREE.Euler(pump * 0.6 + steady * 0.6 + mv.neckBase + grazeDown * 0.75 - this.sleep * 0.3, (lookYaw + idleLook) * 0.5, 0));
+      B.neck2.quaternion.setFromEuler(new THREE.Euler(pump * 0.4 + steady * 0.4 + mv.neckBase * 0.4 + grazeDown * 0.55 - lookPitch * 0.5, (lookYaw + idleLook) * 0.4, 0));
+      B.head.quaternion.setFromEuler(new THREE.Euler(-pump * 0.35 + mv.headBase + grazeDown * 0.2 - lookPitch * 0.5, (lookYaw + idleLook) * 0.2, 0));
+      // chewing while grazing; snorting breath at speed
+      if (B.jaw) B.jaw.quaternion.setFromEuler(new THREE.Euler(this.graze * Math.max(0, Math.sin(this.t * 7)) * 0.12 + (g.name === 'gallop' ? Math.max(0, Math.sin(TAU * ph)) * 0.05 : 0), 0, 0));
     } else if (B.head) {
       // bunny: nose twitch, sniffing
       B.head.quaternion.setFromEuler(new THREE.Euler(grazeDown * 0.5 + Math.sin(this.t * 13) * 0.02, lookYaw * 0.6 + idleLook, 0));
@@ -151,7 +197,8 @@ export class QuadAnimator {
       if (this.earT[e] <= 0) { this.earT[e] = 1 + Math.random() * 5; this.earA[e] = 0.5; }
       this.earA[e] *= Math.exp(-dt * 6);
       const bone = e === 0 ? B.earL : B.earR;
-      if (bone) bone.quaternion.setFromEuler(new THREE.Euler(-0.1 + Math.sin(this.t * 40) * this.earA[e] * 0.3 + (st.action === 'flee' ? 0.6 : 0), 0, (e === 0 ? 1 : -1) * (this.earA[e] * 0.4 + lookYaw * 0.3)));
+      const fwdEar = THREE.MathUtils.clamp(Math.abs(speed) / 8, 0, 1) * -0.25;
+      if (bone) bone.quaternion.setFromEuler(new THREE.Euler(-0.1 + fwdEar + Math.sin(this.t * 40) * this.earA[e] * 0.3 + (st.action === 'flee' ? 0.6 : 0), 0, (e === 0 ? 1 : -1) * (this.earA[e] * 0.4 + lookYaw * 0.3)));
     }
     // tail: spring that lags body turns, swishes at flies
     const yawRate = (st.yaw - this.lastYaw) / Math.max(dt, 1e-3);
@@ -160,10 +207,12 @@ export class QuadAnimator {
     const tailTarget = -THREE.MathUtils.clamp(yawRate, -3, 3) * 0.15 + swish;
     this.tailV += (tailTarget - this.tailA) * dt * 40 - this.tailV * dt * 6;
     this.tailA += this.tailV * dt;
-    const lift = g.name === 'gallop' || g.name === 'canter' ? -0.5 : 0;
-    if (B.tail1) B.tail1.quaternion.setFromEuler(new THREE.Euler(lift + (rig.anatomy.id === 'pig' ? -1.2 : 0), this.tailA, 0));
-    if (B.tail2) B.tail2.quaternion.setFromEuler(new THREE.Euler(lift * 0.5, this.tailA * 1.2, 0));
-    if (B.tail3) B.tail3.quaternion.setFromEuler(new THREE.Euler(0, this.tailA * 1.4, 0));
+    // at speed the tail streams out behind, rippling with the stride; the hair end trails lower
+    const lift = mv.tail;
+    const wave = Math.sin(TAU * (ph - 0.2)) * Math.abs(lift) * 0.35;
+    if (B.tail1) B.tail1.quaternion.setFromEuler(new THREE.Euler(lift + wave * 0.3 + (rig.anatomy.id === 'pig' ? -1.2 : 0), this.tailA, 0));
+    if (B.tail2) B.tail2.quaternion.setFromEuler(new THREE.Euler(lift * 0.25 - wave * 0.6, this.tailA * 1.2, 0));
+    if (B.tail3) B.tail3.quaternion.setFromEuler(new THREE.Euler(-lift * 0.35 + wave, this.tailA * 1.4, 0));
     root.updateMatrixWorld(true);
 
     // legs
@@ -178,7 +227,7 @@ export class QuadAnimator {
       const home = new THREE.Vector3(st.pos.x + rf.x * cosY + rf.z * sinY, 0, st.pos.z - rf.x * sinY + rf.z * cosY);
       home.y = this.ground(home.x, home.z);
       if (this.initFeet) { S.planted.copy(home); S.to.copy(home); }
-      const lp = moving ? (this.phase - g.off[i] + 1) % 1 : 1;
+      const lp = moving ? (this.phase - this.gaitOff[i] + 1) % 1 : 1;
       const swing = moving && lp > g.duty;
       let F: THREE.Vector3;
       if (swing) {
@@ -189,8 +238,11 @@ export class QuadAnimator {
         const remain = (1 - sp) * (1 - g.duty) / g.freq * speed;
         S.to.set(home.x + Math.sin(st.yaw) * (stride + remain * 0), 0, home.z + Math.cos(st.yaw) * (stride + remain * 0));
         S.to.y = this.ground(S.to.x, S.to.z);
-        F = S.from.clone().lerp(S.to, sp * sp * (3 - 2 * sp));
-        F.y += Math.sin(sp * Math.PI) * (0.12 + speed * 0.03) * this.scale * (L.front ? 1.2 : 0.9);
+        // fore feet snap up and tuck, then reach out ahead before landing; hind feet sweep forward lower
+        const e = L.front ? 1 - Math.pow(1 - sp, 2.2) : sp * sp * (3 - 2 * sp);
+        F = S.from.clone().lerp(S.to, e);
+        const arc = L.front ? Math.pow(Math.sin(Math.min(1, sp * 1.15) * Math.PI), 0.7) : Math.sin(sp * Math.PI);
+        F.y += arc * (L.front ? g.liftF : g.liftH) * this.scale * (this.hop ? 1 : 1);
       } else {
         if (S.swinging) { S.swinging = false; S.planted.copy(S.to); }
         if (!moving) {
@@ -203,7 +255,9 @@ export class QuadAnimator {
       if (this.sleep > 0.01) F.lerp(home.clone().setY(home.y + this.scale * 0.05), this.sleep);
       // fetlock point above the hoof; folds back during swing
       const fold = swing ? Math.sin(((lp - g.duty) / (1 - g.duty)) * Math.PI) : 0;
-      const back = new THREE.Vector3(-Math.sin(st.yaw), 0, -Math.cos(st.yaw)).multiplyScalar(L.front ? fold * 0.9 : fold * 0.4);
+      // fore fetlocks fold right up under the forearm in the fast gaits; hind ones flex back less
+      const fast = THREE.MathUtils.clamp((Math.abs(speed) / this.scale - 2) / 6, 0, 1);
+      const back = new THREE.Vector3(-Math.sin(st.yaw), 0, -Math.cos(st.yaw)).multiplyScalar(L.front ? fold * (0.9 + fast * 1.3) : fold * (0.4 + fast * 0.5));
       const P = F.clone().addScaledVector(_v.set(0, 1, 0).add(back).normalize(), S.l3);
       const pole = S.pole.clone().applyQuaternion(this.modelQ);
       if (this.sleep > 0.01) pole.lerp(new THREE.Vector3(Math.sin(st.yaw), 0, Math.cos(st.yaw)).multiplyScalar(L.front ? -1 : 1), this.sleep);
@@ -235,7 +289,17 @@ export class BipedAnimator {
   block = 0;
   limp = 0;
   heightScale = 1;
+  /** talking (gesturing hands, nodding); set by conversations */
+  talking = 0;
   private modelQ = new THREE.Quaternion();
+  /** springy arm angles: upper arm pitch/roll, elbow flex and their velocities, per side (L, R) */
+  private arm = [0, 1].map(() => ({ ax: 0, az: 0, fx: -0.3, hx: 0, vax: 0, vaz: 0, vfx: 0, vhx: 0 }));
+  /** idle fidgets: hands on hips, arms folded, scratching the head, looking about, rubbing hands */
+  private fidget: 'none' | 'hips' | 'fold' | 'scratch' | 'look' | 'rub' | 'stretch' = 'none';
+  private fidgetT = 4 + Math.random() * 10;
+  private fidgetW = 0;
+  private gestT = 0; private gest = [0, 0, 0];
+  private seed = Math.random() * 100;
   constructor(public rig: Rig, public ground: Ground) {
     const r = rig.rest, B = rig.anatomy.bones;
     const iT = B.findIndex((b) => b.name === 'thighL'), iS = B.findIndex((b) => b.name === 'shinL'), iF = B.findIndex((b) => b.name === 'footL');
@@ -271,11 +335,27 @@ export class BipedAnimator {
     root.getWorldQuaternion(this.modelQ);
     for (const b of rig.bones) b.quaternion.identity();
     const E = (x: number, y: number, z: number) => _q.setFromEuler(new THREE.Euler(x, y, z, 'YXZ'));
-    // torso: lean forward when running, counter-rotate shoulders against hips
+    // torso: lean forward when running, counter-rotate shoulders against hips; at rest the weight shifts slowly
+    // from foot to foot and the chest rises with each breath
     const sw = Math.sin(this.phase * Math.PI * 2);
-    B.hips.quaternion.copy(E(0, sw * 0.08 * Math.min(1, speed), this.limp * sw * 0.06));
-    B.spine.quaternion.copy(E(run * 0.18 + this.carry * -0.05, -sw * 0.06, 0));
-    B.chest.quaternion.copy(E(run * 0.05, -sw * 0.08 * Math.min(1, speed), 0));
+    const still = moving ? 0 : 1;
+    const shift = Math.sin(this.t * 0.37 + this.seed) * 0.035 * still * (1 - this.sit);
+    const breath = Math.sin(this.t * (moving ? 2.4 + run * 2 : 1.35) + this.seed);
+    B.hips.quaternion.copy(E(0, sw * 0.09 * Math.min(1, speed), this.limp * sw * 0.06 + shift));
+    B.spine.quaternion.copy(E(run * 0.2 + this.carry * -0.05 + breath * 0.008, -sw * 0.07 * Math.min(1, speed), -shift * 0.7));
+    B.chest.quaternion.copy(E(run * 0.06 - breath * 0.012, -sw * 0.1 * Math.min(1, speed), -shift * 0.4));
+    // idle fidgets (only standing about, hands free)
+    const free = !moving && this.carry < 0.1 && this.eat < 0.1 && this.sit < 0.1 && this.ride < 0.1 && this.sleep < 0.1 && this.dead < 0.1 && !st.armed && this.block < 0.1 && this.swingT < 0;
+    this.fidgetT -= dt;
+    if (this.fidgetT <= 0) {
+      if (this.fidget === 'none' && free && this.talking < 0.2) {
+        const opts: BipedAnimator['fidget'][] = ['hips', 'fold', 'fold', 'scratch', 'look', 'look', 'rub', 'stretch'];
+        this.fidget = opts[Math.floor(Math.random() * opts.length)];
+        this.fidgetT = this.fidget === 'scratch' || this.fidget === 'stretch' ? 2.5 : 4 + Math.random() * 7;
+      } else { this.fidget = 'none'; this.fidgetT = 5 + Math.random() * 12; }
+    }
+    if (!free) this.fidget = 'none';
+    this.fidgetW += ((this.fidget !== 'none' ? 1 : 0) - this.fidgetW) * Math.min(1, dt * 3);
     // head look
     let ly = 0, lp = 0;
     if (st.look) {
@@ -283,16 +363,48 @@ export class BipedAnimator {
       ly = Math.atan2(_v.x, _v.z) - st.yaw; ly = Math.atan2(Math.sin(ly), Math.cos(ly));
       ly = THREE.MathUtils.clamp(ly, -1.1, 1.1);
       lp = THREE.MathUtils.clamp(-Math.atan2(_v.y - 1.6, Math.hypot(_v.x, _v.z)), -0.6, 0.6);
+    } else if (this.fidget === 'look') { ly = Math.sin(this.t * 0.7 + this.seed) * 0.8 * this.fidgetW; lp = Math.sin(this.t * 0.45) * 0.15 * this.fidgetW; }
+    // talking: little nods and head tilts with the phrasing
+    const nod = this.talking * (Math.sin(this.t * 5.1 + this.seed) * 0.05 + Math.sin(this.t * 1.7) * 0.04);
+    const tilt = this.talking * Math.sin(this.t * 0.9 + this.seed) * 0.06 + (this.fidget === 'scratch' ? 0.15 * this.fidgetW : 0);
+    // the head stays level against the walking bob and the shoulder twist
+    B.neck.quaternion.copy(E(lp * 0.4 + nod * 0.5 - run * 0.08, ly * 0.4 + sw * 0.05 * Math.min(1, speed), tilt * 0.5));
+    B.head.quaternion.copy(E(lp * 0.6 + this.eat * 0.15 + nod - run * 0.06, ly * 0.6, tilt * 0.5));
+    // talking gestures: every second or so a new hand shape (open palm out, a point, a shrug)
+    if (this.talking > 0.05) {
+      this.gestT -= dt;
+      if (this.gestT <= 0) { this.gestT = 0.7 + Math.random() * 1.4; this.gest = [Math.random() < 0.6 ? Math.random() : 0, Math.random() < 0.35 ? Math.random() : 0, Math.random()]; }
     }
-    B.neck.quaternion.copy(E(lp * 0.4, ly * 0.4, 0));
-    B.head.quaternion.copy(E(lp * 0.6 + this.eat * 0.15, ly * 0.6, 0));
-    // arms: swing, carry, eat, weapon swing, block
+    // arms: a target pose from the activity, then a damped spring toward it (follow-through and settle)
+    const wk = Math.min(1, speed / 1.4);
     for (const s of [1, -1]) {
-      const n = s > 0 ? 'L' : 'R';
-      const armSwing = moving ? -sw * s * (0.35 + run * 0.5) : Math.sin(this.t * 0.8 + s) * 0.02;
-      let ax = armSwing, az = s * 0.08, fx = -0.15 - (moving ? 0.2 + run * 0.9 : 0), ay = 0;
+      const n = s > 0 ? 'L' : 'R', A = this.arm[s > 0 ? 0 : 1];
+      // relaxed: the arm hangs a touch forward and out, elbow softly bent
+      let ax = 0.04, az = s * 0.1, fx = -0.28, ay = 0, hx = 0.1;
+      if (moving) {
+        // walking: the upper arm swings from the shoulder; the elbow bends more on the forward swing
+        const swing = -sw * s;
+        ax = swing * (0.32 + run * 0.55) * wk + 0.05;
+        fx = -0.3 - Math.max(0, -swing) * (0.45 + run * 0.4) * wk - run * 1.15;
+        az = s * (0.1 + run * 0.08);
+        hx = 0.15 + run * 0.2;
+      } else {
+        ax += Math.sin(this.t * 0.8 + s + this.seed) * 0.015;
+        const fw = this.fidgetW;
+        if (this.fidget === 'hips') { ax = THREE.MathUtils.lerp(ax, 0.35, fw); az = THREE.MathUtils.lerp(az, s * 0.75, fw); fx = THREE.MathUtils.lerp(fx, -1.6, fw); ay = s * -0.3 * fw; }
+        else if (this.fidget === 'fold') { ax = THREE.MathUtils.lerp(ax, -0.35, fw); az = THREE.MathUtils.lerp(az, s * 0.05, fw); fx = THREE.MathUtils.lerp(fx, -1.95, fw); ay = s * 0.45 * fw; }
+        else if (this.fidget === 'scratch' && s < 0) { const sc = Math.sin(this.t * 14) * 0.08; ax = THREE.MathUtils.lerp(ax, -2.3, fw); az = THREE.MathUtils.lerp(az, -0.5, fw); fx = THREE.MathUtils.lerp(fx, -2.0 + sc, fw); }
+        else if (this.fidget === 'rub') { ax = THREE.MathUtils.lerp(ax, -0.55, fw); az = THREE.MathUtils.lerp(az, s * -0.1, fw); fx = THREE.MathUtils.lerp(fx, -1.2 + Math.sin(this.t * 9 + s) * 0.08, fw); ay = s * 0.35 * fw; }
+        else if (this.fidget === 'stretch') { ax = THREE.MathUtils.lerp(ax, -2.9, fw); az = THREE.MathUtils.lerp(az, s * 0.35, fw); fx = THREE.MathUtils.lerp(fx, -0.3, fw); }
+        if (this.talking > 0.05) {
+          const g = s < 0 ? this.gest[0] : this.gest[1];
+          ax = THREE.MathUtils.lerp(ax, -0.25 - g * 0.6, this.talking); fx = THREE.MathUtils.lerp(fx, -1.0 - g * 0.6, this.talking);
+          az = THREE.MathUtils.lerp(az, s * (0.15 + g * 0.35), this.talking); ay = THREE.MathUtils.lerp(ay, s * g * 0.5, this.talking); hx = -0.2 * g;
+        }
+      }
       // carrying: both arms forward holding something at the chest
       ax = THREE.MathUtils.lerp(ax, -1.1, this.carry); fx = THREE.MathUtils.lerp(fx, -0.9, this.carry); az = THREE.MathUtils.lerp(az, s * -0.15, this.carry);
+      let snap = false;
       if (s < 0) {
         // right hand: eating brings food to the mouth
         ax = THREE.MathUtils.lerp(ax, -0.6, this.eat); fx = THREE.MathUtils.lerp(fx, -2.2 + Math.sin(this.t * 6) * 0.15 * this.eat, this.eat); az = THREE.MathUtils.lerp(az, 0.35, this.eat);
@@ -306,14 +418,28 @@ export class BipedAnimator {
           else if (this.swingDir === 'thrust') { ax = -1.4; fx = -1.6 * wind; }
           else { const sd = this.swingDir === 'right' ? 1 : -1; ax = -1.4; ay = sd * (1.2 * wind - 1.4 * strike); fx = -0.4; }
           if (p >= 1) this.swingT = -1;
+          snap = true;   // blows are driven, not sprung
         }
       } else if (this.block > 0.01) {
         ax = THREE.MathUtils.lerp(ax, -1.3, this.block); fx = THREE.MathUtils.lerp(fx, -1.4, this.block); az = THREE.MathUtils.lerp(az, -0.6, this.block);
       }
-      // riding: hands forward on the reins
+      // riding: hands forward on the reins, moving with the horse
       ax = THREE.MathUtils.lerp(ax, -0.7, this.ride); fx = THREE.MathUtils.lerp(fx, -0.8, this.ride);
-      B['arm' + n].quaternion.copy(E(ax, ay, az));
-      B['fore' + n].quaternion.copy(E(fx, 0, 0));
+      if (this.dead > 0.5 || this.sleep > 0.5) { ax = 0; az = s * 0.15; fx = -0.1; }
+      // spring: stiff enough to track a swing, soft enough to overshoot and settle like a real limb
+      const w = 15, z = 0.55, h = Math.min(dt, 1 / 30);
+      if (snap || this.init) { A.ax = ax; A.az = az; A.fx = fx; A.hx = hx; A.vax = A.vaz = A.vfx = A.vhx = 0; }
+      else {
+        A.vax += ((ax - A.ax) * w * w - 2 * z * w * A.vax) * h; A.ax += A.vax * h;
+        A.vaz += ((az - A.az) * w * w - 2 * z * w * A.vaz) * h; A.az += A.vaz * h;
+        A.vfx += ((fx - A.fx) * w * w * 0.8 - 2 * z * w * A.vfx) * h; A.fx += A.vfx * h;
+        A.vhx += ((hx - A.hx) * w * w * 0.6 - 2 * z * w * A.vhx) * h; A.hx += A.vhx * h;
+      }
+      B['arm' + n].quaternion.copy(E(A.ax, ay, A.az));
+      B['fore' + n].quaternion.copy(E(Math.min(0, A.fx), s * 0.1 * Math.min(0, A.fx), 0));
+      if (B['hand' + n]) B['hand' + n].quaternion.copy(E(A.hx, 0, s * -0.08));
+      // the collar bone shrugs a little with the arm
+      if (B['clav' + n]) B['clav' + n].quaternion.copy(E(0, 0, s * Math.max(-0.12, Math.min(0.12, -A.ax * 0.05 + (this.fidget === 'stretch' ? 0.1 * this.fidgetW : 0)))));
     }
     root.updateMatrixWorld(true);
     // legs

@@ -67,7 +67,16 @@ export function generateBuilding(spec: BuildingSpec): BuildingModel {
   for (let f = 0; f < floors; f++) model.floorY.push(PLINTH + f * fh);
 
   // ---- plinth / foundation ----
-  ext.box(M.plinth, 0, PLINTH / 2 - 0.25, 0, w + 0.12, PLINTH + 0.5, d + 0.12, 0.6);
+  // stone base: its top sits a little below the floorboards inside (never coplanar with them, which flickers),
+  // with a ring under the walls coming up flush to meet them
+  ext.box(M.plinth, 0, (PLINTH - 0.05 - 0.5) / 2, 0, w + 0.12, PLINTH - 0.05 + 0.5, d + 0.12, 0.6);
+  {
+    const inX = w / 2 - T / 2, outX = w / 2 + 0.06, inZ = d / 2 - T / 2, outZ = d / 2 + 0.06, h = PLINTH + 0.5, cy = PLINTH / 2 - 0.25;
+    for (const sd of [-1, 1]) {
+      ext.box(M.plinth, sd * (inX + outX) / 2, cy, 0, outX - inX, h, d + 0.12, 0.6);
+      ext.box(M.plinth, 0, cy, sd * (inZ + outZ) / 2, w - T, h, outZ - inZ, 0.6);
+    }
+  }
   col(0, PLINTH / 2 - 0.25, 0, (w + 0.12) / 2, (PLINTH + 0.5) / 2, (d + 0.12) / 2);
   // front step
   ext.box(M.plinth, 0, PLINTH / 2 - 0.1, d / 2 + 0.35, 1.6, PLINTH - 0.05, 0.6, 0.6);
@@ -197,9 +206,10 @@ export function generateBuilding(spec: BuildingSpec): BuildingModel {
   for (let i = 1; i < Math.floor(w / 2.2); i++) int.box(M.beam, -w / 2 + i * w / Math.floor(w / 2.2), eaveY + 0.1, 0, 0.18, 0.2, d - T, 2);
 
   // ---- floors, ceilings, stairs ----
-  const stairW = 0.95, stairLen = Math.min(d - 1.2, fh * 1.25);
+  // the flight starts a step back from the front wall, so there is a landing to walk onto it from
+  const stairW = 0.95, stairLen = Math.max(2.4, Math.min(d - T - 1.7, fh * 1.25));
   const stairX = stairSide * (w / 2 - T / 2 - stairW / 2);
-  const stairZ0 = d / 2 - T / 2 - 0.3, stairZ1 = stairZ0 - stairLen; // climbs toward the back
+  const stairZ0 = Math.min(d / 2 - T / 2 - 0.95, -d / 2 + T / 2 + 0.6 + stairLen), stairZ1 = stairZ0 - stairLen; // climbs toward the back
   for (let f = 0; f < floors; f++) {
     const y = PLINTH + f * fh;
     const fk = big && spec.type !== 'chapel' && spec.type !== 'hall' && f === 0 ? M.floor : f === 0 && (spec.style === 'stone' || spec.type === 'tavern') && r() < 0.5 ? M.stoneFloor : M.floor;
@@ -215,8 +225,16 @@ export function generateBuilding(spec: BuildingSpec): BuildingModel {
         col((x0 + x1) / 2, y - 0.06, (z0 + z1) / 2, (x1 - x0) / 2, 0.06, (z1 - z0) / 2);
       };
       slab(X0, X1, Z0, hz0); slab(X0, X1, hz1, Z1); slab(X0, hx0, hz0, hz1); slab(hx1, X1, hz0, hz1);
-      // joists under the floor
-      for (let i = 0; i < Math.floor(w / 1.1); i++) int.box(M.beam, -w / 2 + (i + 0.5) * w / Math.floor(w / 1.1), y - 0.22, 0, 0.16, 0.2, d - T, 2);
+      // joists under the floor, cut short at the stairwell (with trimmer beams framing the opening) so nothing
+      // crosses the stair headroom
+      const nJ = Math.floor(w / 1.1);
+      for (let i = 0; i < nJ; i++) {
+        const jx = -w / 2 + (i + 0.5) * w / nJ;
+        if (jx + 0.08 < hx0 || jx - 0.08 > hx1) { int.box(M.beam, jx, y - 0.22, 0, 0.16, 0.2, d - T, 2); continue; }
+        if (hz0 - Z0 > 0.05) int.box(M.beam, jx, y - 0.22, (Z0 + hz0) / 2, 0.16, 0.2, hz0 - Z0, 2);
+        if (Z1 - hz1 > 0.05) int.box(M.beam, jx, y - 0.22, (hz1 + Z1) / 2, 0.16, 0.2, Z1 - hz1, 2);
+      }
+      for (const tz of [hz0 - 0.08, hz1 + 0.08]) if (tz > Z0 && tz < Z1) int.box(M.beam, (hx0 + hx1) / 2, y - 0.22, tz, hx1 - hx0 + 0.3, 0.2, 0.16, 2);
       // stairs from the floor below
       const yb = y - fh, steps = Math.ceil(fh / 0.2);
       for (let s = 0; s < steps; s++) {
@@ -240,7 +258,7 @@ export function generateBuilding(spec: BuildingSpec): BuildingModel {
       const ang = Math.atan2(fh, stairLen);
       const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), ang);
       col(stairX, yb + fh / 2 - 0.08, (stairZ0 + stairZ1) / 2, stairW / 2, 0.06, Math.hypot(fh, stairLen) / 2, q);
-      model.stairs.push({ from: new THREE.Vector3(stairX, yb, stairZ0 + 0.4), to: new THREE.Vector3(stairX, y, stairZ1 - 0.4) });
+      model.stairs.push({ from: new THREE.Vector3(stairX, yb, stairZ0 + 0.55), to: new THREE.Vector3(stairX, y, stairZ1 - 0.4) });
     }
     // ceiling beams under the next level / roof
     if (f === floors - 1) for (let i = 0; i < Math.floor(d / 1.4); i++) int.box(M.beam, 0, y + fh - 0.12, -d / 2 + (i + 0.5) * d / Math.floor(d / 1.4), w - T, 0.18, 0.16, 2);

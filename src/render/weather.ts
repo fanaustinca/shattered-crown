@@ -2,7 +2,7 @@
 // snow (in the cold Ironreach heights). Drives clouds, wind, wetness, puddles, snow cover,
 // rain/snow particles around the camera, splashes, lightning and thunder.
 import * as THREE from 'three';
-import { sharedUniforms, LAYER_WATER } from './pipeline';
+import { sharedUniforms } from './pipeline';
 import type { Game } from '../game';
 import { waterUniforms } from './water';
 
@@ -39,9 +39,9 @@ export class Weather {
     for (let i = 0; i < N * 3; i++) seeds[i] = Math.random();
     g.setAttribute('aSeed', new THREE.InstancedBufferAttribute(seeds, 3));
     g.instanceCount = N;
-    const u = { uTime: sharedUniforms.uTime, uCam: { value: new THREE.Vector3() }, uAmount: { value: 0 }, uWind: { value: new THREE.Vector2() }, uSnow: { value: 0 }, uLight: { value: new THREE.Color() } };
+    const u = { uTime: sharedUniforms.uTime, tSceneDepth: sharedUniforms.tSceneDepth, uResolution: sharedUniforms.uResolution, uCam: { value: new THREE.Vector3() }, uAmount: { value: 0 }, uWind: { value: new THREE.Vector2() }, uSnow: { value: 0 }, uLight: { value: new THREE.Color() } };
     const vert = (snow: boolean) => /* glsl */ `
-      attribute vec3 aSeed; uniform float uTime, uAmount; uniform vec3 uCam; uniform vec2 uWind; varying float vA; varying vec2 vUv;
+      attribute vec3 aSeed; uniform float uTime, uAmount; uniform vec3 uCam; uniform vec2 uWind; varying float vA; varying vec2 vUv; varying float vDepth;
       void main() {
         float box = ${snow ? '30.0' : '24.0'};
         float fall = ${snow ? '1.4' : '11.0'} * (0.85 + aSeed.z * 0.3);
@@ -57,23 +57,36 @@ export class Weather {
         vA = step(aSeed.x * 0.999, uAmount) * (1.0 - smoothstep(box * 0.35, box * 0.5, length(p.xz - c.xz)));
         vec3 right = normalize(cross(vec3(0.0, 1.0, 0.0), normalize(cameraPosition - p) + 1e-4));
         float len = ${snow ? '0.03' : '0.95'};
-        vec3 wp = p + right * position.x * ${snow ? '6.0' : '1.6'} + vec3(uWind.x * 0.06, -1.0, uWind.y * 0.06) * position.y * len ${snow ? '+ vec3(0.0, position.y * 0.03, 0.0)' : ''};
+        // never thinner than about a pixel, or distant drops vanish between pixels
+        float dc = length(p - cameraPosition);
+        float wid = max(${snow ? '6.0' : '1.6'}, dc * ${snow ? '0.16' : '0.17'});
+        vA *= ${snow ? '1.0' : 'clamp(1.6 / wid * 1.3, 0.35, 1.0)'};
+        vec3 wp = p + right * position.x * wid + vec3(uWind.x * 0.06, -1.0, uWind.y * 0.06) * position.y * len ${snow ? '+ vec3(0.0, position.y * 0.03, 0.0)' : ''};
         vUv = position.xy;
-        gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.0);
+        vec4 mv = viewMatrix * vec4(wp, 1.0);
+        vDepth = -mv.z;
+        gl_Position = projectionMatrix * mv;
       }`;
     const frag = (snow: boolean) => /* glsl */ `
-      varying float vA; varying vec2 vUv; uniform vec3 uLight;
-      void main() { if (vA < 0.5) discard; float edge = 1.0 - abs(vUv.x) * 120.0; gl_FragColor = vec4(uLight * ${snow ? '1.6' : '1.3'}, ${snow ? '0.9' : '0.34'} * ${snow ? '1.0' : 'clamp(edge, 0.4, 1.0)'}); }`;
+      varying float vA; varying vec2 vUv; varying float vDepth; uniform vec3 uLight; uniform sampler2D tSceneDepth; uniform vec2 uResolution;
+      void main() {
+        if (vA < 0.01) discard;
+        // hidden behind walls, roofs and ground (manual depth test against the opaque pass)
+        float sd = texture2D(tSceneDepth, gl_FragCoord.xy / uResolution).x;
+        if (vDepth > sd) discard;
+        float edge = 1.0 - abs(vUv.x) * 120.0;
+        ${snow ? 'gl_FragColor = vec4(uLight * 1.6, 0.9 * vA);' : 'float tip = smoothstep(0.0, 0.25, vUv.y) * smoothstep(1.0, 0.6, vUv.y); gl_FragColor = vec4(uLight * 1.5, 0.5 * vA * tip * clamp(edge, 0.5, 1.0));'}
+      }`;
     const mk = (snow: boolean) => {
-      const m = new THREE.ShaderMaterial({ uniforms: { ...u, uAmount: { value: 0 } }, vertexShader: vert(snow), fragmentShader: frag(snow), transparent: true, depthWrite: false });
+      const m = new THREE.ShaderMaterial({ uniforms: { ...u, uAmount: { value: 0 } }, vertexShader: vert(snow), fragmentShader: frag(snow), transparent: true, depthWrite: false, depthTest: false });
       const mesh = new THREE.Mesh(g, m);
-      mesh.frustumCulled = false; mesh.layers.set(LAYER_WATER);
+      mesh.frustumCulled = false;
       return mesh;
     };
     this.rainMesh = mk(false);
     this.snowMesh = mk(true);
     this.uniforms = u;
-    game.scene.add(this.rainMesh, this.snowMesh);
+    game.pipeline.overlay.add(this.rainMesh, this.snowMesh);
   }
   uniforms: Record<string, { value: unknown }>;
 
@@ -128,7 +141,8 @@ export class Weather {
     (u.uCam.value as THREE.Vector3).copy(g.camera.position);
     (u.uWind.value as THREE.Vector2).copy(sharedUniforms.uWind.value);
     const light = (u.uLight.value as THREE.Color).setRGB(0.5, 0.55, 0.6).multiplyScalar(0.25 + g.lighting.dayFactor * 0.9);
-    void light;
+    // the distant rain sheets in the atmosphere pass: lit by the grey sky, invisible indoors
+    (au.uRainLight.value as THREE.Color).copy(light).multiplyScalar(g.settlements.inside(g.camera.position) ? 0 : 0.9);
     this.rainMesh.visible = this.cur.rain > 0.02 && !g.settlements.inside(g.camera.position);
     this.snowMesh.visible = this.cur.snow > 0.02 && !g.settlements.inside(g.camera.position);
     (this.rainMesh.material as THREE.ShaderMaterial).uniforms.uAmount.value = this.cur.rain;

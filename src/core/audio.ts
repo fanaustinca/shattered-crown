@@ -45,7 +45,7 @@ export class Audio {
     for (const [k, v] of Object.entries(levels)) {
       const a = this.amb[k];
       if (!a) continue;
-      a.gain.gain.setTargetAtTime(v * ({ wind: 0.25, river: 0.35, surf: 0.4, rain: 0.3, fire: 0.25, crowd: 0.15 }[k] ?? 0.2), t, 0.5);
+      a.gain.gain.setTargetAtTime(v * ({ wind: 0.13, river: 0.3, surf: 0.3, rain: 0.16, fire: 0.22, crowd: 0.15 }[k] ?? 0.2), t, 0.5);
       if (k === 'wind') a.filter.frequency.setTargetAtTime(300 + wind * 600 + Math.sin(t * 0.3) * 150, t, 1);
       if (k === 'surf') a.gain.gain.setTargetAtTime(v * 0.4 * (0.6 + 0.4 * Math.sin(t * 0.5)), t, 0.8);
       if (k === 'fire') a.filter.Q.value = 2 + Math.random() * 6;
@@ -133,7 +133,7 @@ export class Audio {
       case 'chirp': { const base = 2800 + Math.random() * 2000; for (let i = 0; i < 2 + Math.floor(Math.random() * 4); i++) this.tone(o, base, base * (1.2 + Math.random() * 0.5), 0.06, 'sine', 0.06, i * 0.09); break; }
       case 'cricket': for (let i = 0; i < 4; i++) this.tone(o, 4400, 4300, 0.03, 'square', 0.015, i * 0.05); break;
       case 'bell': for (const f of [440, 880, 1320, 1760]) this.tone(o, f, f, 2.5, 'sine', 0.08 / (f / 440)); break;
-      case 'thunder': this.burst(o, 4, 'lowpass', 200, 0.5, 0.05, 1.5, 50); break;
+      case 'thunder': this.burst(o, 4, 'lowpass', 200, 0.5, 0.05, 0.85, 50); break;
       case 'shout': this.tone(o, 220, 180, 0.4, 'sawtooth', 0.08); this.burst(o, 0.4, 'bandpass', 800, 2, 0.02, 0.3); break;
       case 'coins': for (let i = 0; i < 5; i++) this.tone(o, 3000 + Math.random() * 2000, 2800, 0.12, 'sine', 0.08, i * 0.04); break;
       case 'sail': this.burst(o, 0.8, 'lowpass', 400, 0.8, 0.1, 0.6); break;

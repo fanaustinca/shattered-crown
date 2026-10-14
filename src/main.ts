@@ -1,11 +1,12 @@
 import { Game } from './game';
 import { installDebugApi } from './debug';
 import { installDevConsole } from './devconsole';
-import { coatFor } from './creature/rig';
+import { coatFor, boneAtlasDebug } from './creature/rig';
 import * as Anim from './creature/anim';
 import * as Furn from './props/furniture';
 import { FurnitureNode } from './props/furnish';
 (window as unknown as { __coatFor: typeof coatFor }).__coatFor = coatFor;
+(window as unknown as { __atlas: unknown }).__atlas = boneAtlasDebug;
 (window as unknown as { __anim: typeof Anim }).__anim = Anim;
 (window as unknown as { __furn: unknown }).__furn = { ...Furn, FurnitureNode };
 

@@ -75,6 +75,8 @@ const atmosphereShader = (q: Quality) => ({
     uWaterY: { value: 0 },
     uSunScreen: { value: new THREE.Vector3(0.5, 0.5, 0) },
     uRain: sharedUniforms.uRain,
+    uWind: sharedUniforms.uWind,
+    uRainLight: { value: new THREE.Color() },
   },
   vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
   fragmentShader: SKY_UNIFORMS + SKY_GLSL + /* glsl */ `
@@ -86,13 +88,47 @@ const atmosphereShader = (q: Quality) => ({
     uniform mat4 uProjInv, uViewInv;
     uniform vec3 uCamPos, uSunColor, uSunScreen;
     uniform float uCloudCover, uCloudDensity, uFogDensity, uFogFalloff, uMist, uUnderwater, uWaterY, uRain;
-    uniform vec2 uCloudOffset;
+    uniform vec2 uCloudOffset, uWind;
+    uniform vec3 uRainLight;
     uniform int uFrame;
     varying vec2 vUv;
+
 
     const float CB = 1500.0, CT = 2900.0;
     float remap(float v, float a, float b, float c, float d) { return c + (v - a) / (b - a) * (d - c); }
     float hash12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+    // Rain beyond the particle box: falling streak sheets on cylinders of growing radius around the camera,
+    // each only drawn where the scene lies behind it, so rain hangs in front of hills, towers and the sky.
+    float rainSheets(vec3 rd, float dist) {
+      float az = atan(rd.x, rd.z);
+      float horiz = max(length(rd.xz), 1e-3);
+      float acc = 0.0;
+      for (int L = 0; L < 4; L++) {
+        float fl = float(L);
+        float D = 9.0 * pow(2.3, fl);
+        float vis = smoothstep(D * 0.75, D * 1.3, dist);
+        if (vis <= 0.0) continue;
+        float hgt = rd.y / horiz * D;                       // height where the ray meets this sheet
+        float cols = floor(D * 6.2832 / (0.07 + fl * 0.05)); // a drop every few centimetres around the ring
+        // wind slants the rain across the line of sight
+        vec2 tang = vec2(cos(az), -sin(az));
+        float slant = dot(uWind, tang) * 0.07;
+        float u = az / 6.2832 * cols + slant * hgt / (D * 6.2832 / cols);
+        float id = floor(u);
+        float h1 = hash12(vec2(id, fl * 17.0)), h2 = hash12(vec2(id * 1.7, fl * 3.1 + 5.0));
+        float speed = 9.0 + h2 * 3.0;
+        float len = 0.55 + h1 * 0.5;
+        float y = fract((hgt + uTime * speed) / (len * 4.5) + h1 * 7.0);
+        float along = smoothstep(0.0, 0.08, y) * smoothstep(0.26, 0.1, y);
+        float fu = fract(u) - 0.5 - (h2 - 0.5) * 0.5;
+        float w = max(fwidth(u) * 0.9, 0.05);
+        float across = 1.0 - smoothstep(0.0, w, abs(fu));
+        // only some columns hold a drop at any moment; denser in heavy rain
+        float on = step(h2, 0.25 + uRain * 0.55);
+        acc += across * along * on * vis * (0.55 - fl * 0.09) * min(1.0, w * 9.0 + 0.4);
+      }
+      return acc;
+    }
 
     float cloudDensity(vec3 p, bool cheap) {
       float h = (p.y - CB) / (CT - CB);
@@ -212,6 +248,7 @@ const atmosphereShader = (q: Quality) => ({
         fogCol += uSunColor * sg * 0.12 * max(sunDir.y + 0.1, 0.0);
         col = mix(col, fogCol, fogAmt);
       }
+      if (uRain > 0.02) col += uRainLight * rainSheets(rd, dist) * uRain * 0.7;
       gl_FragColor = vec4(col, 1.0);
     }`,
 });
@@ -330,6 +367,8 @@ export class Pipeline {
   }
 
   get finalUniforms() { return (this.final.material as THREE.ShaderMaterial).uniforms; }
+  /** drawn after the atmosphere into the HDR target (rain, snow) */
+  overlay = new THREE.Scene();
   get atmoUniforms() { return this.atmoMat.uniforms; }
 
   setQuality(q: Quality) {
@@ -406,6 +445,13 @@ export class Pipeline {
     u.uCamPos.value.copy(cam.position);
     u.uFrame.value = this.frame;
     r.setRenderTarget(this.rtA); this.atmo.render(r);
+    // near rain and snow go on after the atmosphere, otherwise the clouds and haze behind each drop paint over it;
+    // they test themselves against the scene depth in the shader (rtA has no depth buffer)
+    if (this.overlay.children.some((o) => o.visible)) {
+      const ac2 = r.autoClear; r.autoClear = false;
+      r.render(this.overlay, cam);
+      r.autoClear = ac2;
+    }
     // god rays
     const fu = this.finalUniforms;
     fu.uRaysOn.value = 0;

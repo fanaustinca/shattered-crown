@@ -15,6 +15,7 @@ export interface Prim {
 }
 export interface MeshData {
   positions: Float32Array; normals: Float32Array; skinIndex: Uint16Array; skinWeight: Float32Array;
+  /** 16 region weights per vertex (sum 1): colours blend smoothly across borders instead of interpolating ids */
   regions: Float32Array; indices: Uint32Array;
 }
 
@@ -158,7 +159,7 @@ export function buildMesh(prims: Prim[], cell: number, boneCount: number): MeshD
     }
   }
   const normals = new Float32Array(nv * 3);
-  const skinIndex = new Uint16Array(nv * 4), skinWeight = new Float32Array(nv * 4), regions = new Float32Array(nv);
+  const skinIndex = new Uint16Array(nv * 4), skinWeight = new Float32Array(nv * 4), regions = new Float32Array(nv * 16);
   const boneW = new Float32Array(boneCount);
   const regW = new Float32Array(16);
   for (let v = 0; v < nv; v++) {
@@ -172,10 +173,14 @@ export function buildMesh(prims: Prim[], cell: number, boneCount: number): MeshD
     boneW.fill(0); regW.fill(0);
     for (let p = 0; p < prims.length; p++) {
       if (prims[p].sub) continue;
-      const d = Math.max(0, primDist(prims[p], x, y, z));
+      const dr = primDist(prims[p], x, y, z);
+      const d = Math.max(0, dr);
       const w = 1 / Math.pow(d + 0.012, 4);
       boneW[prims[p].bone] += w;
-      regW[prims[p].region ?? 0] += 1 / Math.pow(d + 0.004, 6);
+      // colour comes from the prims whose surface this is: one the vertex is buried inside (a thigh under a
+      // tunic) counts by how deep it is buried, so it can't show through
+      const dc = dr < 0 ? -dr * 2.5 : dr;
+      regW[prims[p].region ?? 0] += 1 / Math.pow(dc + 0.004, 6);
     }
     // top four bones
     const top: [number, number][] = [];
@@ -187,11 +192,11 @@ export function buildMesh(prims: Prim[], cell: number, boneCount: number): MeshD
       skinIndex[v * 4 + t] = t < top.length ? top[t][0] : 0;
       skinWeight[v * 4 + t] = t < top.length ? top[t][1] / sum : 0;
     }
-    let br = 0, bw = -1;
-    for (let r = 0; r < 16; r++) if (regW[r] > bw) { bw = regW[r]; br = r; }
-    // soft region value: dominant region plus how strongly (lets shaders feather borders)
+    // normalised region weights; tiny shares are dropped so colours stay clean away from borders
     let rs = 0; for (let r = 0; r < 16; r++) rs += regW[r];
-    regions[v] = br + Math.min(0.99, bw / rs);
+    let rs2 = 0;
+    for (let r = 0; r < 16; r++) { const w = regW[r] / rs; regW[r] = w < 0.02 ? 0 : w; rs2 += regW[r]; }
+    for (let r = 0; r < 16; r++) regions[v * 16 + r] = regW[r] / rs2;
   }
   return { positions, normals, skinIndex, skinWeight, regions, indices: new Uint32Array(idx) };
 }

@@ -238,11 +238,20 @@ export class Game {
     this.weather = new Weather(this);
     this.music.moodHint = () => {
       const p = this.player.pos, h = this.hours, w = this.weather.cur;
+      if (this.battleNear) return 'battle';
+      const inside = this.settlements.inside(p);
+      if (inside) {
+        const t = inside.placed.spec.type;
+        if (t === 'tavern') return 'tavern';
+        if (t === 'chapel' || t === 'hall') return 'hall';
+      }
       if (w.rain > 0.3 || w.snow > 0.4) return 'rain';
       if (h < 5.5 || h > 20.5) return 'night';
       if (h > 18 || h < 7) return 'dusk';
       if (this.world.heightAt(p.x, p.z) > 110 || this.world.eastAt(p.x, p.z) > 0.6) return 'mountain';
       if (this.world.waterLevelAt(p.x, p.z) > this.world.heightAt(p.x, p.z) || Math.hypot(p.x, p.z) > 2700) return 'sea';
+      const site = nearestSite(p.x, p.z);
+      if (site.d < site.site.r && site.site.kind !== 'castle') return 'town';
       return 'day';
     };
     this.hud = new Hud(this);
@@ -436,13 +445,15 @@ export class Game {
     this.input.endFrame();
   }
 
+  battleNear = false;
   private updateMusic(dt: number) {
     const ctx = this.audio.ctx;
     if (!ctx) return;
     this.music.attach(ctx, this.audio.master);
     const p = this.player.pos;
     // fights duck the music; it keeps quiet while blades are out nearby
-    const fight = this.residents.live.some((n) => n.hostile && n.st.pos.distanceToSquared(p) < 900) || this.war.soldiers.some((s) => s.alive && s.fightTarget && s.st.pos.distanceToSquared(p) < 3600);
+    const fight = this.residents.live.some((n) => n.hostile && n.st.pos.distanceToSquared(p) < 900) || this.war.soldiers.some((s) => s.alive && s.fightTarget && s.st.pos.distanceToSquared(p) < 600);
+    this.battleNear = this.war.soldiers.some((s) => s.alive && s.fightTarget && s.st.pos.distanceToSquared(p) < 300 * 300);
     this.music.duck += ((fight ? 1 : 0) - this.music.duck) * Math.min(1, dt * 0.5);
     this.music.update(dt);
   }

@@ -221,46 +221,90 @@ export function human(p: HumanP): Anatomy {
   }
   const g = 1 + b * 0.12; // girth
   const torsoR = p.armor ? R.cloth2 : R.cloth1;
-  // torso and tunic
-  k.ell('hips', [0, 0.98, 0], [hipW * 1.45 * g, 0.13, 0.12 * g], 0.05, f && p.dress ? R.cloth1 : R.cloth2);
-  k.ell('spine', [0, 1.14, 0.0], [0.14 * g, 0.13, 0.11 * g], 0.07, torsoR);
-  k.ell('chest', [0, 1.31, 0.005], [sh * 0.82, 0.15, 0.12 * g], 0.07, torsoR);
-  if (f) for (const sd of [1, -1]) k.ell('chest', [sd * 0.055, 1.3, 0.085], [0.055, 0.05, 0.04], 0.04, torsoR);
-  k.ell('hips', [0, 1.0, 0.0], [hipW * 1.5 * g, 0.03, 0.125 * g], 0.02, R.belt);
-  // skirt of the tunic / dress
-  const hem = p.dress ? 0.12 : 0.72;
-  if (p.clothSkirt) k.cone('hips', [0, 1.0, 0], [0, 0.9, -0.005], 0.17 * g, 0.185 * g, 0.03, R.cloth1);   // waistband; the skirt is cloth
-  else k.cone('hips', [0, 1.0, 0], [0, hem, -0.01], 0.17 * g, p.dress ? 0.3 : 0.2 * g, 0.03, R.cloth1);
-  // neck and head
-  k.cone('neck', [0, 1.46, 0.0], [0, 1.58, 0.015], 0.055, 0.05, 0.03, R.skin);
-  k.ell('head', [0, 1.69, 0.015], [0.082, 0.105, 0.098], 0.02, R.skin);
-  k.ell('head', [0, 1.63, 0.045], [0.07, 0.06, 0.07], 0.04, R.skin);   // jaw
-  k.cone('head', [0, 1.685, 0.1], [0, 1.65, 0.125], 0.012, 0.014, 0.02, R.skin); // nose
-  k.ell('head', [0, 1.72, 0.085], [0.07, 0.016, 0.025], 0.02, R.skin);    // brow
+  const W = f ? 0.92 : 1;   // shoulder/chest width factor
+  // ---- torso: pelvis, waist, ribcage, shoulders (built up from body masses, the tunic hugging them) ----
+  // pelvis and seat
+  // (under the tunic skirt: same cloth, so nothing of another colour pokes through it)
+  const seat = p.clothSkirt ? R.cloth2 : R.cloth1;
+  k.ell('hips', [0, 0.97, -0.005], [(f ? 0.165 : 0.15) * g, 0.11, 0.105 * g], 0.05, seat);
+  for (const sd of [1, -1]) k.ell('hips', [sd * 0.06, 0.93, -0.055], [0.075 * g, 0.085, 0.07 * g], 0.05, seat); // buttocks
+  // waist: narrower than chest and hips, a little deeper at the belly with build
+  k.ell('spine', [0, 1.12, 0.005 + b * 0.015], [(f ? 0.12 : 0.135) * g, 0.1, (0.095 + b * 0.02) * g], 0.07, torsoR);
+  // ribcage, wider at the top, flat-backed
+  k.ell('chest', [0, 1.3, 0.0], [0.155 * W * g, 0.16, 0.11 * g], 0.07, torsoR);
+  k.ell('chest', [0, 1.36, -0.03], [0.14 * W * g, 0.1, 0.085 * g], 0.06, torsoR);   // upper back / shoulder blades
+  if (f) for (const sd of [1, -1]) k.ell('chest', [sd * 0.058, 1.31, 0.075], [0.06, 0.055, 0.045], 0.04, torsoR);
+  else for (const sd of [1, -1]) k.ell('chest', [sd * 0.07, 1.34, 0.065], [0.075 * g, 0.055, 0.035], 0.05, torsoR);   // pectorals
+  // trapezius: the slope from the neck down to the shoulders (what makes a body read as a person, not a doll)
+  for (const sd of [1, -1]) k.cone('chest', [sd * 0.03, 1.49, -0.015], [sd * (sh - 0.045), 1.445, -0.005], 0.045 * g, 0.04 * g, 0.05, torsoR);
+  // belt
+  k.ell('hips', [0, 1.02, 0.0], [(f ? 0.145 : 0.148) * g, 0.022, 0.112 * g], 0.015, R.belt);
+  k.box('hips', [0.0, 1.02, 0.112 * g], [0.025, 0.02, 0.006], 0.004, 0.006, R.boots); // buckle
+  // skirt of the tunic / dress: an oval flare that clears the legs, with the hem just above the knee
+  const hem = p.dress ? 0.1 : 0.66;
+  if (p.clothSkirt) k.cone('hips', [0, 1.0, 0], [0, 0.9, -0.005], 0.16 * g, 0.175 * g, 0.03, R.cloth1);   // waistband; the skirt is cloth
+  else if (p.dress) k.cone('hips', [0, 1.0, 0], [0, hem, -0.01], 0.155 * g, 0.29, 0.03, R.cloth1);
+  else {
+    const top = 0.99, mid = (top + hem) / 2;
+    k.ell('hips', [0, mid, -0.005], [0.188 * g, (top - hem) / 2 + 0.02, 0.138 * g], 0.04, R.cloth1);
+    k.box('hips', [0, hem + 0.012, -0.005], [0.18 * g, 0.012, 0.13 * g], 0.012, 0.03, R.cloth1); // hem edge
+  }
+  // ---- neck and head ----
+  k.cone('neck', [0, 1.45, -0.01], [0, 1.575, 0.012], 0.06 * (f ? 0.88 : 1), 0.052 * (f ? 0.88 : 1), 0.035, R.skin);
+  k.cone('neck', [0, 1.47, 0.02], [0, 1.56, 0.045], 0.018, 0.012, 0.03, R.skin);   // throat / Adam's apple line
+  const hs = f ? 0.96 : 1;   // head scale
+  const H = (x: number, y: number, z: number): V3 => [x * hs, 1.6 + (y - 1.6) * hs, z * hs];
+  k.ell('head', H(0, 1.695, -0.005), [0.078 * hs, 0.1 * hs, 0.098 * hs], 0.02, R.skin);              // cranium
+  k.ell('head', H(0, 1.64, 0.035), [0.064 * hs, 0.07 * hs, 0.075 * hs], 0.04, R.skin);               // jaw and cheeks
+  k.ell('head', H(0, 1.6, 0.06), [(f ? 0.03 : 0.036) * hs, 0.026 * hs, 0.03 * hs], 0.03, R.skin);   // chin
+  for (const sd of [1, -1]) k.ell('head', H(sd * 0.048, 1.665, 0.07), [0.026 * hs, 0.022 * hs, 0.02 * hs], 0.025, R.skin); // cheekbones
+  k.cone('head', H(0, 1.705, 0.098), H(0, 1.66, 0.124), 0.011 * hs, 0.016 * hs, 0.02, R.skin);      // nose bridge to tip
+  k.ell('head', H(0, 1.656, 0.118), [0.017 * hs, 0.011 * hs, 0.012 * hs], 0.01, R.skin);              // nostrils
+  k.ell('head', H(0, 1.722, 0.088), [0.068 * hs, 0.014 * hs, 0.022 * hs], 0.018, R.skin);            // brow ridge
+  k.ell('head', H(0, 1.628, 0.104), [0.024 * hs, 0.007 * hs, 0.009 * hs], 0.006, R.muzzle);          // lips
   for (const sd of [1, -1]) {
-    k.sub('head', [sd * 0.032, 1.695, 0.1], [0.018, 0.012, 0.014], 0.012);  // eye sockets
-    k.ell('head', [sd * 0.085, 1.68, 0.0], [0.012, 0.028, 0.02], 0.01, R.skin); // ears
+    k.sub('head', H(sd * 0.032, 1.697, 0.102), [0.019, 0.012, 0.013], 0.012);                        // eye sockets
+    k.ell('head', H(sd * 0.082, 1.678, 0.0), [0.012, 0.03, 0.02], 0.01, R.skin);                      // ears
+    k.ell('head', H(sd * 0.033, 1.718, 0.1), [0.02, 0.0045, 0.008], 0.004, R.hairH);                 // eyebrows
   }
   // hair
-  k.ell('head', [0, 1.745, -0.005], [0.088, 0.075, 0.1], 0.015, R.hairH);
-  if (p.hairLong) k.ell('head', [0, 1.6, -0.06], [0.09, 0.15, 0.06], 0.03, R.hairH);
-  if (p.beard) k.ell('head', [0, 1.6, 0.075], [0.06, 0.055, 0.04], 0.02, R.hairH);
-  // arms
+  k.ell('head', H(0, 1.748, -0.01), [0.084, 0.072, 0.1], 0.015, R.hairH);
+  k.ell('head', H(0, 1.7, -0.06), [0.08, 0.07, 0.06], 0.02, R.hairH);   // back of the head
+  if (p.hairLong) { k.ell('head', H(0, 1.6, -0.065), [0.088, 0.15, 0.055], 0.03, R.hairH); for (const sd of [1, -1]) k.ell('head', H(sd * 0.07, 1.62, -0.01), [0.025, 0.11, 0.05], 0.03, R.hairH); }
+  if (p.beard) { k.ell('head', H(0, 1.605, 0.07), [0.058, 0.05, 0.04], 0.02, R.hairH); k.ell('head', H(0, 1.645, 0.112), [0.03, 0.006, 0.01], 0.008, R.hairH); }
+  // ---- arms: deltoid, upper arm, elbow, forearm, wrist, hand with fingers and thumb ----
   for (const sd of [1, -1]) {
     const n = sd > 0 ? 'L' : 'R';
-    k.ell('arm' + n, [sd * (sh - 0.02), 1.42, 0], [0.06 * g, 0.06, 0.06 * g], 0.05, torsoR);
-    k.cone('arm' + n, [sd * sh, 1.42, 0], [sd * (sh + 0.04), 1.16, -0.01], 0.05 * g, 0.042 * g, 0.04, torsoR);
-    k.cone('fore' + n, [sd * (sh + 0.04), 1.16, -0.01], [sd * (sh + 0.06), 0.94, 0.02], 0.042 * g, 0.033, 0.02, p.armor ? R.cloth2 : R.cloth1);
-    k.ell('hand' + n, [sd * (sh + 0.065), 0.87, 0.025], [0.025, 0.05, 0.04], 0.02, R.skin);
-    k.cone('hand' + n, [sd * (sh + 0.055), 0.86, 0.06], [sd * (sh + 0.055), 0.8, 0.07], 0.012, 0.009, 0.01, R.skin); // thumb
-    // legs
-    k.cone('thigh' + n, [sd * hipW * 0.85, 0.94, 0], [sd * hipW * 0.8, 0.52, 0.01], 0.085 * g, 0.058 * g, 0.05, R.cloth2);
-    k.cone('shin' + n, [sd * hipW * 0.8, 0.52, 0.01], [sd * hipW * 0.8, 0.12, -0.02], 0.058 * g, 0.042, 0.03, p.dress ? R.cloth2 : R.boots);
-    k.box('foot' + n, [sd * hipW * 0.8, 0.045, 0.04], [0.045, 0.045, 0.11], 0.03, 0.03, R.boots);
+    const S0: V3 = [sd * sh, 1.44, 0], E0: V3 = [sd * (sh + 0.04), 1.16, -0.01], W0: V3 = [sd * (sh + 0.06), 0.93, 0.02];
+    k.ell('arm' + n, [sd * (sh - 0.005), 1.415, 0], [0.058 * g, 0.07, 0.06 * g], 0.05, torsoR);                    // deltoid / shoulder cap
+    k.cone('arm' + n, S0, E0, 0.047 * g, 0.037 * g, 0.04, torsoR);
+    k.ell('arm' + n, [sd * (sh + 0.012), 1.3, -0.012], [0.04 * g, 0.075, 0.04 * g], 0.04, torsoR);               // biceps / triceps mass
+    k.ell('fore' + n, E0, [0.035 * g, 0.035, 0.034 * g], 0.03, torsoR);                                         // elbow
+    k.cone('fore' + n, E0, W0, 0.039 * g, 0.026, 0.03, p.armor ? R.cloth2 : R.cloth1);
+    k.ell('fore' + n, [sd * (sh + 0.045), 1.1, 0.0], [0.038 * g, 0.06, 0.036 * g], 0.03, p.armor ? R.cloth2 : R.cloth1); // forearm muscle
+    k.cone('fore' + n, [W0[0], W0[1] + 0.03, W0[2]], [W0[0], W0[1] - 0.005, W0[2]], 0.026, 0.024, 0.01, R.skin);           // wrist
+    // hand: palm, fingers curled slightly toward the body, thumb in front
+    k.box('hand' + n, [sd * (sh + 0.063), 0.875, 0.025], [0.014, 0.042, 0.038], 0.012, 0.012, R.skin);
+    k.box('hand' + n, [sd * (sh + 0.06), 0.815, 0.03], [0.012, 0.035, 0.034], 0.011, 0.012, R.skin);
+    k.cone('hand' + n, [sd * (sh + 0.055), 0.885, 0.06], [sd * (sh + 0.045), 0.84, 0.072], 0.011, 0.008, 0.01, R.skin);   // thumb
+    // ---- legs: thigh, knee, calf, shin, ankle, shoe ----
+    const Hp: V3 = [sd * hipW * 0.85, 0.94, 0], K0: V3 = [sd * hipW * 0.8, 0.52, 0.01], A0: V3 = [sd * hipW * 0.8, 0.11, -0.02];
+    // the upper thigh is under the tunic: give it the tunic's cloth so it never shows through
+    const Tm: V3 = [sd * hipW * 0.83, p.dress || p.clothSkirt ? 0.72 : 0.7, 0.005];
+    k.cone('thigh' + n, Hp, Tm, 0.082 * g, 0.068 * g, 0.05, p.clothSkirt ? R.cloth2 : R.cloth1);
+    k.cone('thigh' + n, Tm, K0, 0.068 * g, 0.054 * g, 0.05, R.cloth2);
+    k.ell('thigh' + n, [sd * hipW * 0.88, 0.7, 0.012], [0.056 * g, 0.09, 0.058 * g], 0.05, R.cloth2);           // quadriceps
+    k.ell('shin' + n, [K0[0], K0[1] - 0.005, K0[2] + 0.015], [0.048 * g, 0.048, 0.045 * g], 0.03, p.dress ? R.cloth2 : R.boots); // knee
+    k.cone('shin' + n, K0, A0, 0.052 * g, 0.034, 0.03, p.dress ? R.cloth2 : R.boots);
+    k.ell('shin' + n, [K0[0], 0.4, -0.025], [0.045 * g, 0.09, 0.042 * g], 0.04, p.dress ? R.cloth2 : R.boots);    // calf
+    // shoe: heel, instep and a rounded toe
+    k.ell('foot' + n, [A0[0], 0.05, -0.035], [0.038, 0.05, 0.045], 0.03, R.boots);
+    k.box('foot' + n, [A0[0], 0.04, 0.045], [0.04, 0.04, 0.085], 0.035, 0.035, R.boots);
+    k.ell('toe' + n, [A0[0], 0.03, 0.12], [0.04, 0.03, 0.045], 0.03, R.boots);
   }
   return {
     id: 'human', bones: k.bones, prims: k.prims, cell: 0.0085, kind: 'biped',
-    eyes: [1, -1].map((sd) => ({ bone: k.i('head'), pos: [sd * 0.032, 1.697, 0.094] as V3, r: 0.0125 })),
+    eyes: [1, -1].map((sd) => ({ bone: k.i('head'), pos: [sd * 0.032 * (f ? 0.96 : 1), 1.6 + (1.698 - 1.6) * (f ? 0.96 : 1), 0.093 * (f ? 0.96 : 1)] as V3, r: 0.0125 })),
   };
 }
 export { mx, qx };

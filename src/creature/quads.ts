@@ -194,18 +194,18 @@ export function buildQuad(L: QuadLandmarks): Anatomy {
 }
 
 export const HORSE: QuadLandmarks = {
-  id: 'horse', width: 0.3,
-  croup: [1.56, -0.6], withers: [1.6, 0.55], back: [1.5, 0.05], belly: [0.82, 0.05],
-  buttock: [1.32, -0.86], pointShoulder: [1.18, 0.86], girth: [0.95, 0.5],
-  neckBase: [1.32, 0.78], throat: [1.68, 1.12], poll: [1.98, 1.22], muzzle: [1.5, 1.58],
-  neckDepth: 0.52, neckTopR: 0.09, craniumR: 0.115, jowlR: 0.12, muzzleR: [0.075, 0.085, 0.09],
+  id: 'horse', width: 0.32,
+  croup: [1.56, -0.6], withers: [1.62, 0.55], back: [1.5, 0.05], belly: [0.8, 0.05],
+  buttock: [1.32, -0.86], pointShoulder: [1.2, 0.86], girth: [0.92, 0.5],
+  neckBase: [1.34, 0.8], throat: [1.66, 1.1], poll: [2.0, 1.2], muzzle: [1.48, 1.6],
+  neckDepth: 0.6, neckTopR: 0.115, craniumR: 0.13, jowlR: 0.155, muzzleR: [0.085, 0.1, 0.1],
   ear: { len: 0.16, w: 0.045, tilt: 0.25, out: 0.25 },
-  legX: 0.17, hindX: 0.18,
-  front: { elbow: [1.02, 0.68], knee: [0.56, 0.7], fetlock: [0.17, 0.69], hoofZ: 0.74 },
-  hind: { stifle: [1.0, -0.42], hock: [0.6, -0.74], fetlock: [0.17, -0.7], hoofZ: -0.66 },
-  legR: { forearm: 0.095, knee: 0.06, cannon: 0.042, fetlock: 0.055, pastern: 0.042, hoof: [0.06, 0.068, 0.095], thigh: 0.17, gaskin: 0.1 },
-  tail: { base: [1.48, -0.86], len: 0.45, r: 0.055, hair: 0.085, hairLen: 0.6 },
-  mane: 0.04, eyeR: 0.022,
+  legX: 0.18, hindX: 0.19,
+  front: { elbow: [1.02, 0.68], knee: [0.54, 0.7], fetlock: [0.18, 0.69], hoofZ: 0.74 },
+  hind: { stifle: [1.0, -0.42], hock: [0.6, -0.74], fetlock: [0.18, -0.7], hoofZ: -0.66 },
+  legR: { forearm: 0.11, knee: 0.068, cannon: 0.048, fetlock: 0.062, pastern: 0.046, hoof: [0.068, 0.075, 0.105], thigh: 0.19, gaskin: 0.115 },
+  tail: { base: [1.48, -0.86], len: 0.42, r: 0.06, hair: 0.11, hairLen: 0.78 },
+  mane: 0.055, eyeR: 0.024,
 };
 export const DONKEY: QuadLandmarks = {
   ...HORSE, id: 'donkey', width: 0.27,

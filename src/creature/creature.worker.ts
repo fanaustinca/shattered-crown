@@ -8,14 +8,19 @@ const BUDGET: Record<string, number> = { horse: 16000, cow: 15000, donkey: 12000
 function simplify(m: MeshData, targetTris: number): MeshData {
   const tris = m.indices.length / 3;
   if (tris <= targetTris) return m;
-  const [idx] = MeshoptSimplifier.simplify(m.indices, m.positions, 3, targetTris * 3, 0.02, []);
+  // keep region borders (hooves, muzzle, clothing edges) and the shading where they are: simplify with the
+  // normals and region weights as attributes
+  const nv0 = m.positions.length / 3, attrs = new Float32Array(nv0 * 19);
+  for (let v = 0; v < nv0; v++) { attrs.set(m.normals.subarray(v * 3, v * 3 + 3), v * 19); attrs.set(m.regions.subarray(v * 16, v * 16 + 16), v * 19 + 3); }
+  const weights = [0.4, 0.4, 0.4, ...new Array(16).fill(0.8)];
+  const [idx] = MeshoptSimplifier.simplifyWithAttributes(m.indices, m.positions, 3, attrs, 19, weights, null, targetTris * 3, 0.02, []);
   // compact to the vertices still referenced
   const remap = new Int32Array(m.positions.length / 3).fill(-1);
   let n = 0;
   for (const i of idx) if (remap[i] < 0) remap[i] = n++;
   const out: MeshData = {
     positions: new Float32Array(n * 3), normals: new Float32Array(n * 3), skinIndex: new Uint16Array(n * 4), skinWeight: new Float32Array(n * 4),
-    regions: new Float32Array(n), indices: new Uint32Array(idx.length),
+    regions: new Float32Array(n * 16), indices: new Uint32Array(idx.length),
   };
   for (let v = 0; v < remap.length; v++) {
     const k = remap[v];
@@ -24,7 +29,7 @@ function simplify(m: MeshData, targetTris: number): MeshData {
     out.normals.set(m.normals.subarray(v * 3, v * 3 + 3), k * 3);
     out.skinIndex.set(m.skinIndex.subarray(v * 4, v * 4 + 4), k * 4);
     out.skinWeight.set(m.skinWeight.subarray(v * 4, v * 4 + 4), k * 4);
-    out.regions[k] = m.regions[v];
+    out.regions.set(m.regions.subarray(v * 16, v * 16 + 16), k * 16);
   }
   for (let i = 0; i < idx.length; i++) out.indices[i] = remap[idx[i]];
   return out;

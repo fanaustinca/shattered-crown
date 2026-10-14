@@ -12,6 +12,7 @@ interface Capsule { a: THREE.Vector3; b: THREE.Vector3; r: number }
 type Anchor = { kind: 'bone'; bone: THREE.Bone; inv: THREE.Matrix4 } | { kind: 'world'; obj: THREE.Object3D };
 
 const _m = new THREE.Matrix4(), _wind = new THREE.Vector3(), _v = new THREE.Vector3(), _w = new THREE.Vector3(), _ab = new THREE.Vector3(), _ap = new THREE.Vector3();
+const _o = new THREE.Vector3();
 
 export class Cloth {
   n: number;
@@ -71,6 +72,7 @@ export class Cloth {
     this.geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
     this.geo.setIndex(idx);
     this.mesh = new THREE.Mesh(this.geo, material(matKey));
+    this.geo.userData.cloth = true;
     this.mesh.castShadow = true; this.mesh.receiveShadow = true;
     this.mesh.frustumCulled = false;
     this.setRigid();
@@ -113,9 +115,18 @@ export class Cloth {
     this.geo.computeVertexNormals();
   }
 
+  private lastO = new THREE.Vector3(NaN, 0, 0);
   step(dt: number, wind: THREE.Vector3, t: number, iters: number) {
     const P = this.pos, Q = this.prev, n = this.n;
     this.frame(this.worldOf);
+    // the wearer jumped (teleport, streamed in, mounted, a cheap far-away movement step): carry the cloth along
+    // rigidly instead of letting it stretch across the gap for a frame
+    _o.setFromMatrixPosition(this.worldOf);
+    if (this.lastO.x === this.lastO.x) {
+      const jx = _o.x - this.lastO.x, jy = _o.y - this.lastO.y, jz = _o.z - this.lastO.z;
+      if (jx * jx + jy * jy + jz * jz > 0.8 * 0.8) for (let k = 0; k < n * 3; k += 3) { P[k] += jx; P[k + 1] += jy; P[k + 2] += jz; Q[k] += jx; Q[k + 1] += jy; Q[k + 2] += jz; }
+    }
+    this.lastO.copy(_o);
     this.updateColliders?.();
     const nrm = this.geo.getAttribute('normal') as THREE.BufferAttribute;
     const N = nrm.array as Float32Array;
@@ -165,6 +176,16 @@ export class Cloth {
   }
   /** Push the simulated positions to the GPU (once per frame). */
   publish() {
+    // never show a blown-up cloth: if anything went far out of shape, start again from the rest drape
+    const C = this.cons, L = this.len, P = this.pos;
+    for (let c = 0; c < C.length / 2; c += 7) {
+      const a = C[c * 2] * 3, b = C[c * 2 + 1] * 3;
+      const d2 = (P[b] - P[a]) ** 2 + (P[b + 1] - P[a + 1]) ** 2 + (P[b + 2] - P[a + 2]) ** 2;
+      if (!(d2 < (L[c] * 4 + 0.05) ** 2)) {
+        for (let i = 0; i < this.n; i++) { _v.fromArray(this.rest, i * 3).applyMatrix4(this.worldOf); _v.toArray(this.pos, i * 3); _v.toArray(this.prev, i * 3); }
+        break;
+      }
+    }
     (this.posAttr.array as Float32Array).set(this.pos);
     this.posAttr.needsUpdate = true;
     this.geo.computeVertexNormals();

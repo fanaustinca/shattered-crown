@@ -49,6 +49,29 @@ const ring = [0, 1, 2].map(() => {
   return t;
 });
 let atlasDirty = true, ringI = 0, maxEnd = 0;
+let atlasRenderer: THREE.WebGLRenderer | null = null;
+/** Raw uploads must not inherit unpack state from the last image upload: three leaves UNPACK_FLIP_Y on after
+ *  uploading a flipped image, and a flipped bone upload puts every character's bones in someone else's rows
+ *  (they smear across the screen for a frame). */
+function cleanUnpack(gl: WebGL2RenderingContext) {
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+  gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0);
+  gl.pixelStorei(gl.UNPACK_SKIP_ROWS, 0);
+  gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, 0);
+}
+/** Write a block's rows straight into the texture the next draw will read. */
+function uploadBlock(tex: THREE.DataTexture, slot: number) {
+  const r = atlasRenderer;
+  const props = r && (r.properties.get(tex) as { __webglTexture?: WebGLTexture });
+  if (!r || !props?.__webglTexture) return;
+  const gl = r.getContext() as WebGL2RenderingContext;
+  const row0 = Math.floor((slot * 4) / ATLAS_W), row1 = Math.ceil(((slot + BLOCK) * 4) / ATLAS_W);
+  r.state.bindTexture(gl.TEXTURE_2D, props.__webglTexture);
+  cleanUnpack(gl);
+  gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, row0, ATLAS_W, row1 - row0, gl.RGBA, gl.FLOAT, atlasData, row0 * ATLAS_W * 4);
+}
 const atlasSkeletons = new Set<THREE.Skeleton>();
 const freeBlocks: number[] = [];
 for (let b = Math.floor((ATLAS_W * ATLAS_ROWS) / 4 / BLOCK) - 1; b >= 0; b--) freeBlocks.push(b * BLOCK);
@@ -68,6 +91,12 @@ function atlasBind(mesh: THREE.SkinnedMesh) {
   sk.boneTexture = ring[ringI];
   atlasSkeletons.add(sk);
   mesh.bindMatrix.elements[3] = slot;
+  // the slot still holds whoever had it before (or nothing): fill it now and get it onto the GPU, so a creature
+  // made between flushes is never drawn for a frame with another creature's bones (stretched across the world)
+  (sk as THREE.Skeleton & { _gf?: number })._gf = -1;
+  _skelUpdate.call(sk);
+  atlasDirty = true;
+  uploadBlock(ring[ringI], slot);
 }
 /** Return a creature's atlas slot (call when the creature is removed for good). */
 export function releaseRig(rig: Rig) {
@@ -79,6 +108,7 @@ export function releaseRig(rig: Rig) {
 }
 /** Once per frame, after animation and before rendering: send the used rows to the next ring texture. */
 export function flushBoneAtlas(renderer: THREE.WebGLRenderer) {
+  atlasRenderer = renderer;
   // bones must already have this frame's world matrices (the game updates the scene graph once per frame)
   for (const sk of atlasSkeletons) sk.update();
   if (!atlasDirty) return;
@@ -91,11 +121,13 @@ export function flushBoneAtlas(renderer: THREE.WebGLRenderer) {
     const gl = renderer.getContext() as WebGL2RenderingContext;
     const rows = Math.min(ATLAS_ROWS, Math.ceil((maxEnd * 4) / ATLAS_W));
     renderer.state.bindTexture(gl.TEXTURE_2D, props.__webglTexture);
-    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    cleanUnpack(gl);
     gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, ATLAS_W, rows, gl.RGBA, gl.FLOAT, atlasData, 0);
   }
   for (const sk of atlasSkeletons) sk.boneTexture = tex;
 }
+/** debugging: the CPU-side atlas, the ring and which ring texture is current */
+export const boneAtlasDebug = { data: atlasData, ring, skels: atlasSkeletons, get cur() { return ringI; }, get maxEnd() { return maxEnd; } };
 // the atlas is shared: never dispose it with a skeleton
 const _skelDispose = THREE.Skeleton.prototype.dispose;
 THREE.Skeleton.prototype.dispose = function (this: THREE.Skeleton & { _slot?: number }) { if (ring.includes(this.boneTexture as THREE.DataTexture)) { this.boneTexture = null; return; } _skelDispose.call(this); };
@@ -122,10 +154,10 @@ export class AnimLod {
   }
 }
 
-const VERT_PARS = `attribute float aRegion; varying vec3 vRest; varying float vRegion; varying vec3 vRestN;`;
-const VERT_MAIN = `vRest = position; vRegion = aRegion; vRestN = normal;`;
+const VERT_PARS = `attribute vec4 aRw0, aRw1, aRw2, aRw3; varying vec3 vRest; varying vec4 vRw0, vRw1, vRw2, vRw3; varying vec3 vRestN;`;
+const VERT_MAIN = `vRest = position; vRw0 = aRw0; vRw1 = aRw1; vRw2 = aRw2; vRw3 = aRw3; vRestN = normal;`;
 const FRAG_PARS = /* glsl */ `
-varying vec3 vRest; varying float vRegion; varying vec3 vRestN;
+varying vec3 vRest; varying vec4 vRw0, vRw1, vRw2, vRw3; varying vec3 vRestN;
 uniform vec3 uCoat, uCoat2, uBelly, uMuzzle, uHoof, uHair, uSock, uHorn, uBeak, uCloth1, uCloth2, uBoots, uSkin, uBelt;
 uniform float uPattern, uPatScale, uSockAmt, uFur, uHumanTex;
 uniform sampler2D tLinen, tLinenN, tLeather, tLeatherN, tNoiseC;
@@ -143,10 +175,9 @@ vec4 triTex(sampler2D t, vec3 p, vec3 n, float s) {
 }
 `;
 const FRAG_COLOR = /* glsl */ `
-  int reg = int(floor(vRegion + 0.001));
-  float regW = fract(vRegion);
+  // regions (weights sum to 1): 0 coat 1 hoof 2 muzzle 3 belly 4 hair 5,6 coat 7 sock 8 horn 9 beak
+  // 10 cloth1 11 cloth2 12 boots 13 skin 14 head hair 15 belt
   vec3 c = uCoat;
-  float rough = roughness;
   float fn = fbmC(vRest * uPatScale);
   if (uPattern > 0.5 && uPattern < 1.5) {               // piebald / holstein patches
     float m = smoothstep(0.47, 0.53, fbmC(vRest * uPatScale * 0.55 + 3.1));
@@ -161,33 +192,36 @@ const FRAG_COLOR = /* glsl */ `
     c = mix(uCoat, uCoat2, stripe);
   }
   c *= 0.88 + 0.24 * fn;
-  if (reg == 1) { c = uHoof; rough = 0.45; }
-  else if (reg == 2) { c = mix(c, uMuzzle, smoothstep(0.2, 0.6, regW)); rough = 0.5; }
-  else if (reg == 3) { c = mix(c, uBelly, smoothstep(0.1, 0.5, regW)); }
-  else if (reg == 4) { c = uHair * (0.8 + 0.4 * vnoise(vRest * vec3(300.0, 30.0, 300.0))); rough = 0.6; }
-  else if (reg == 7) { c = mix(c, uSock, uSockAmt * smoothstep(0.2, 0.0, vRest.y)); }
-  else if (reg == 8) { c = uHorn; rough = 0.35; }
-  else if (reg == 9) { c = uBeak; rough = 0.4; }
-  else if (reg >= 10) {
+  vec3 col = c * (vRw0.x + vRw1.y + vRw1.z);
+  float rough = roughness * (vRw0.x + vRw1.y + vRw1.z + vRw0.w);
+  col += uHoof * vRw0.y; rough += 0.45 * vRw0.y;
+  col += uMuzzle * (0.9 + 0.2 * fn) * vRw0.z; rough += 0.5 * vRw0.z;
+  col += uBelly * (0.9 + 0.2 * fn) * vRw0.w;
+  col += uHair * (0.8 + 0.4 * vnoise(vRest * vec3(300.0, 30.0, 300.0))) * vRw1.x; rough += 0.6 * vRw1.x;
+  col += mix(c, uSock, uSockAmt * smoothstep(0.2, 0.0, vRest.y)) * vRw1.w; rough += roughness * vRw1.w;
+  col += uHorn * vRw2.x; rough += 0.35 * vRw2.x;
+  col += uBeak * vRw2.y; rough += 0.4 * vRw2.y;
+  float clothW = vRw2.z + vRw2.w + vRw3.x + vRw3.y + vRw3.z + vRw3.w;
+  if (clothW > 0.001) {
     // clothing and skin, with real fabric textures mapped in bind space
     vec3 lin = triTex(tLinen, vRest, vRestN, 3.0).rgb;
     vec3 lea = triTex(tLeather, vRest, vRestN, 4.0).rgb;
-    if (reg == 10) { c = uCloth1 * (lin * 1.9); rough = 0.9; }
-    else if (reg == 11) { c = uCloth2 * (lin * 1.9); rough = 0.88; }
-    else if (reg == 12) { c = uBoots * (lea * 2.2); rough = 0.55; }
-    else if (reg == 13) { c = uSkin * (0.94 + 0.08 * vnoise(vRest * 80.0)); rough = 0.55; }
-    else if (reg == 14) { c = uHair * (0.75 + 0.5 * vnoise(vRest * vec3(40.0, 400.0, 40.0))); rough = 0.5; }
-    else if (reg == 15) { c = uBelt * (lea * 2.0); rough = 0.5; }
+    col += uCloth1 * (lin * 1.9) * vRw2.z; rough += 0.9 * vRw2.z;
+    col += uCloth2 * (lin * 1.9) * vRw2.w; rough += 0.88 * vRw2.w;
+    col += uBoots * (lea * 2.2) * vRw3.x; rough += 0.55 * vRw3.x;
+    col += uSkin * (0.94 + 0.08 * vnoise(vRest * 80.0)) * vRw3.y; rough += 0.55 * vRw3.y;
+    col += uHair * (0.75 + 0.5 * vnoise(vRest * vec3(40.0, 400.0, 40.0))) * vRw3.z; rough += 0.5 * vRw3.z;
+    col += uBelt * (lea * 2.0) * vRw3.w; rough += 0.5 * vRw3.w;
   }
-  diffuseColor.rgb = c;
+  diffuseColor.rgb = col;
   creatureRough = rough;
 `;
 const FRAG_NORMAL = /* glsl */ `
   // fine hair / fabric weave as a normal perturbation in bind space
   {
-    int regN = int(floor(vRegion + 0.001));
-    float amp = regN >= 10 ? 0.25 : uFur;
-    float sc = regN >= 10 ? 260.0 : 900.0;
+    float clothN = vRw2.z + vRw2.w + vRw3.x + vRw3.y + vRw3.z + vRw3.w;
+    float amp = mix(uFur, 0.25, clothN);
+    float sc = clothN > 0.5 ? 260.0 : 900.0;
     vec3 q = vRest * sc;
     vec3 g = vec3(vnoise(q + 1.3) - 0.5, vnoise(q + 7.1) - 0.5, vnoise(q + 3.7) - 0.5);
     normal = normalize(normal + (viewMatrix * vec4(g, 0.0)).xyz * amp);
@@ -249,7 +283,8 @@ export class CreatureLib {
     g.setAttribute('normal', new THREE.BufferAttribute(m.normals, 3));
     g.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(m.skinIndex, 4));
     g.setAttribute('skinWeight', new THREE.BufferAttribute(m.skinWeight, 4));
-    g.setAttribute('aRegion', new THREE.BufferAttribute(m.regions, 1));
+    const rib = new THREE.InterleavedBuffer(m.regions, 16);
+    for (let k = 0; k < 4; k++) g.setAttribute('aRw' + k, new THREE.InterleavedBufferAttribute(rib, 4, k * 4));
     g.setIndex(new THREE.BufferAttribute(m.indices, 1));
     g.computeBoundingSphere();
     return g;

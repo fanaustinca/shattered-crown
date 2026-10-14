@@ -108,11 +108,16 @@ export class Hud {
 export class UI {
   screen: 'title' | 'play' | 'pause' | 'inventory' | 'dialogue' | 'trade' | 'dead' | 'map' = 'title';
   panel: HTMLElement | null = null;
+  /** the title's Begin action, kept so returning from Settings/Help to the title can still start the game */
+  private onBegin: (() => void) | null = null;
+  /** a pause panel opened from the title screen (Settings/Help before starting) */
+  private fromTitle = false;
+  private titleKey: ((e: KeyboardEvent) => void) | null = null;
   constructor(public game: Game) {
     window.addEventListener('keydown', (e) => {
       const g = this.game;
-      if (!g.ready || g.freeCam) return;
-      if (e.code === 'Escape') { if (this.screen === 'play') this.openPause(); else if (this.screen !== 'title' && this.screen !== 'dead') this.close(); }
+      if (!g.ready || (g.freeCam && !this.fromTitle)) return;
+      if (e.code === 'Escape') { if (this.fromTitle && this.screen === 'pause') this.showTitle(); else if (this.screen === 'play') this.openPause(); else if (this.screen !== 'title' && this.screen !== 'dead') this.close(); }
       else if ((e.code === 'Tab' || e.code === 'KeyI') && (this.screen === 'play' || this.screen === 'inventory')) { if (this.screen === 'inventory') this.close(); else { g.interaction.openContainer = null; this.openInventory(); } }
       else if (e.code === 'KeyM' && (this.screen === 'play' || this.screen === 'map')) { if (this.screen === 'map') this.close(); else this.openPause('map'); }
       else if (e.code === 'KeyH' && (this.screen === 'play' || this.screen === 'pause')) this.openPause('help');
@@ -133,12 +138,15 @@ export class UI {
     oc?.onClose?.();
     this.panel?.remove(); this.panel = null;
     this.screen = 'play';
+    this.fromTitle = false;
     this.game.input.uiOpen = false;
     this.game.paused = false;
     this.game.input.lock();
   }
 
-  showTitle(onBegin: () => void) {
+  showTitle(onBegin?: () => void) {
+    if (onBegin) this.onBegin = onBegin;
+    this.fromTitle = false;
     this.screen = 'title';
     const p = this.mount(`<div class="title">
       <div class="crest">♛</div><h1>Shattered Crown</h1><p class="tag">Two kingdoms. One river. Everything is real.</p>
@@ -148,13 +156,16 @@ export class UI {
     // starting must never depend on audio or pointer lock succeeding
     let begun = false;
     const begin = () => {
-      if (begun) return; begun = true;
-      window.removeEventListener('keydown', onKey);
-      try { onBegin(); } catch (e) { console.error(e); }
+      if (begun || this.screen !== 'title') return; begun = true;
+      window.removeEventListener('keydown', onKey); this.titleKey = null;
+      const fn = this.onBegin; this.onBegin = null;
+      try { fn?.(); } catch (e) { console.error(e); }
       try { this.close(); } catch (e) { console.error(e); this.panel?.remove(); this.panel = null; this.screen = 'play'; this.game.paused = false; this.game.input.uiOpen = false; }
       try { this.game.audio.start(); } catch (e) { console.error(e); }
     };
     const onKey = (e: KeyboardEvent) => { if (this.screen === 'title' && (e.code === 'Enter' || e.code === 'Space')) { e.preventDefault(); begin(); } };
+    if (this.titleKey) window.removeEventListener('keydown', this.titleKey);
+    this.titleKey = onKey;
     window.addEventListener('keydown', onKey);
     p.querySelector('.go')!.addEventListener('click', begin);
     p.querySelector('.help')!.addEventListener('click', () => this.openPause('help', true));
@@ -163,17 +174,19 @@ export class UI {
 
   openPause(tab: 'help' | 'settings' | 'map' | 'journal' | 'main' = 'main', fromTitle = false) {
     this.screen = tab === 'map' ? 'map' : 'pause';
+    this.fromTitle = fromTitle;
     this.game.paused = true;
     const p = this.mount(`<div class="pause">
-      <nav><button data-t="main">Game</button><button data-t="map">Map</button><button data-t="journal">Journal</button><button data-t="settings">Settings</button><button data-t="help">Help</button></nav>
+      <nav><button data-t="main">${fromTitle ? '‹ Title' : 'Game'}</button><button data-t="map">Map</button><button data-t="journal">Journal</button><button data-t="settings">Settings</button><button data-t="help">Help</button></nav>
       <section></section>
     </div>`, 'pausepanel');
     const sec = p.querySelector('section')!;
     const show = (t: string) => {
       p.querySelectorAll('nav button').forEach((b) => b.classList.toggle('on', (b as HTMLElement).dataset.t === t));
+      if (t === 'main' && fromTitle) { this.showTitle(); return; }
       if (t === 'main') {
         sec.innerHTML = `<h2>Paused</h2><div class="btns"><button class="r">Resume</button><button class="s">Save</button><button class="l">Load</button></div><p class="dim">v${VERSION}</p>`;
-        sec.querySelector('.r')!.addEventListener('click', () => fromTitle ? this.showTitle(() => {}) : this.close());
+        sec.querySelector('.r')!.addEventListener('click', () => this.close());
         sec.querySelector('.s')!.addEventListener('click', () => { this.game.save(); });
         sec.querySelector('.l')!.addEventListener('click', () => { this.game.load(); this.close(); });
       } else if (t === 'help') {

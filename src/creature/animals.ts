@@ -102,6 +102,8 @@ export class Animal implements Seat {
     return true;
   }
   leave(_p: Player) { this.rider = null; this.mode = 'idle'; this.timer = 3; }
+  /** the rider's view rocks with the gait (a little less than the horse: the rider's body absorbs some) */
+  sway() { const r = (this.anim as { rock?: { pitch: number; roll: number } }).rock; return r ? { pitch: r.pitch * 0.45, roll: -r.roll * 0.5 } : { pitch: 0, roll: 0 }; }
   drive(input: Input, dt: number) {
     if (input.hit('KeyW')) this.speedCmd = Math.min(4, this.speedCmd + 1);
     if (input.hit('KeyS')) this.speedCmd = Math.max(-1, this.speedCmd - 1);
@@ -123,8 +125,10 @@ export class Animal implements Seat {
     const player = ctx.player;
     const dP = player.pos.distanceTo(st.pos);
     if (this.mode === 'ridden' && this.rider) {
+      st.look = null;
       this.drive(ctx.input, dt);
     } else if (this.mode === 'hitched' && this.hitch) {
+      st.look = null;
       // walk to the cart's hitch point; the cart is pulled by its harness constraint
       this.target.copy(this.hitch.pos);
       st.yaw = this.hitch.yaw;

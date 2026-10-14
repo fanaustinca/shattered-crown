@@ -19,6 +19,8 @@ export interface Seat {
   label: string;
   /** camera eye offset above the seat */
   eye?: number;
+  /** extra camera pitch/roll from the seat's motion (a horse's rocking gait, a ship's roll) */
+  sway?(): { pitch: number; roll: number };
   freeLook?: boolean;
 }
 
@@ -134,6 +136,9 @@ export class Player {
     this.phys.world.propagateModifiedBodyPositionsToColliders();
     this.pos.copy(p);
     this.vel.set(0, 0, 0);
+    // stepping down from a saddle, bench or deck is not a fall: the drop is measured from here
+    this.fallStartY = Math.min(p.y, this.world.heightAt(p.x, p.z) + 1.2);
+    this.grounded = false;
     s.leave(this);
   }
 
@@ -272,10 +277,11 @@ export class Player {
     if (!wasGrounded && this.grounded) {
       const fall = this.fallStartY - this.pos.y;
       this.landDip = Math.min(0.25, fall * 0.04);
-      if (fall > 4.5) {
-        const dmg = (fall - 4.5) * 14;
+      // a healthy person shrugs off a drop of a storey; legs suffer past ~6 m, the body past ~11 m
+      if (fall > 6 && this.inWater < 0.8) {
+        const dmg = (fall - 6) * 9;
         this.hurt(Math.random() < 0.5 ? 'lleg' : 'rleg', dmg, 'fall');
-        if (fall > 9) this.hurt('torso', (fall - 9) * 10, 'fall');
+        if (fall > 11) this.hurt('torso', (fall - 11) * 9, 'fall');
       }
       this.footstep?.(this.surface(), Math.min(1, fall * 0.2 + 0.4));
     }
@@ -340,8 +346,10 @@ export class Player {
       eye.x += Math.cos(this.yaw) * Math.sin(this.stepPhase) * 0.02 * b;
       eye.z -= Math.sin(this.yaw) * Math.sin(this.stepPhase) * 0.02 * b;
     }
-    const roll = this.mode === 'walk' ? -Math.sin(this.stepPhase) * 0.004 * this.bobAmt : 0;
-    cam.rotation.set(this.pitch, this.yaw, roll, 'YXZ');
+    let roll = this.mode === 'walk' ? -Math.sin(this.stepPhase) * 0.004 * this.bobAmt : 0;
+    let swayP = 0;
+    if (this.mode === 'seat' && this.seat?.sway && !this.thirdPerson) { const sw = this.seat.sway(); swayP = sw.pitch; roll += sw.roll; }
+    cam.rotation.set(this.pitch + swayP, this.yaw, roll, 'YXZ');
     if (this.thirdPerson || this.mode === 'dead') {
       const back = this.forward().multiplyScalar(-1);
       const want = this.mode === 'dead' ? 4 : this.camDist;

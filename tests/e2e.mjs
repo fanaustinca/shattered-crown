@@ -70,6 +70,20 @@ await test('title screen Begin hands control to the player', async () => {
   await p2.close();
 });
 
+await test('Settings then Begin still starts the game', async () => {
+  const { page: p3 } = await openPage(browser, `http://127.0.0.1:${port}/?quality=low`, { width: 640, height: 360 });
+  await p3.waitForSelector('.title .set', { timeout: 120000 });
+  await p3.click('.title .set');
+  await p3.waitForSelector('.pausepanel nav button');
+  await p3.click('.pausepanel nav button[data-t="main"]');   // back to the title
+  await p3.waitForSelector('.title .go');
+  await p3.click('.title .go');
+  await new Promise((r) => setTimeout(r, 2000));
+  const st = await p3.evaluate(() => ({ freeCam: SC.game.freeCam, started: SC.game.started, screen: SC.game.ui.screen }));
+  assert(st.started && !st.freeCam && st.screen === 'play', JSON.stringify(st));
+  await p3.close();
+});
+
 await browser.close();
 srv.close();
 process.exit(summary() ? 1 : 0);
