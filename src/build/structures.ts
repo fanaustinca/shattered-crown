@@ -106,56 +106,104 @@ function crenels(g: GeoBuilder, key: string, x: number, y: number, len: number, 
   g.box(key, x, y + 0.05, 0, len, 0.1, t, 0.4);
 }
 
-export function buildBridge(b: Bridge, ground: (x: number, z: number) => number): StructModel {
+/** The deck's height along the bridge (local x from -len/2 to len/2): it meets the ground on both banks and
+ *  rises in a gentle curve to clear the water, whatever the banks do. Also updates b.deck (mid-span height). */
+export function bridgeProfile(b: Bridge, ground: (x: number, z: number) => number, waterY: number) {
+  const L = b.len, ax = Math.cos(b.yaw), az = -Math.sin(b.yaw);
+  const endH = (s: number) => ground(b.x + ax * s * L / 2, b.z + az * s * L / 2) + 0.1;
+  const h0 = endH(-1), h1 = endH(1);
+  const lin = (t: number) => h0 + (h1 - h0) * t;
+  // clear the water by ~7 m at mid-span (barges and ships' boats pass under)
+  const bump = Math.max(1.5, waterY + 7 - lin(0.5));
+  const f = (xl: number) => { const t = THREE.MathUtils.clamp((xl + L / 2) / L, 0, 1); return lin(t) + bump * Math.pow(Math.sin(Math.PI * t), 0.75); };
+  b.deck = f(0);
+  return f;
+}
+
+export function buildBridge(b: Bridge, ground: (x: number, z: number) => number, waterY: number): StructModel {
   const g = new GeoBuilder();
   const out: StructModel = { geo: g, colliders: [], gates: [], torches: [] };
-  const stone = 'mat:medieval_blocks_02|wx:1.2', deck = 'mat:cobblestone_floor_01';
+  const stone = 'mat:medieval_blocks_02|wx:1.2', stone2 = 'mat:medieval_blocks_02|tint:d8d0c4|wx:1', coping = 'mat:white_sandstone_blocks_02|tint:c8c0b4|wx:0.6', deck = 'mat:cobblestone_floor_01';
   const L = b.len, W = 7.5;
   const ax = Math.cos(b.yaw), az = -Math.sin(b.yaw);
+  const deckY = bridgeProfile(b, ground, waterY);
+  const gAt = (xl: number) => ground(b.x + ax * xl, b.z + az * xl);
   g.push().translate(b.x, 0, b.z).rotateY(b.yaw);
-  // deck slightly humped in the middle
-  const segs = 16;
+  const yawQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), b.yaw);
+  // ---- deck: sloped segments that follow the profile (no steps), parapets with a coping stone ----
+  const segs = Math.ceil(L / 4);
   for (let i = 0; i < segs; i++) {
     const x0 = -L / 2 + (i / segs) * L, x1 = -L / 2 + ((i + 1) / segs) * L, xm = (x0 + x1) / 2;
-    const hump = Math.cos((xm / L) * Math.PI) * 1.2;
-    const y = b.deck + hump;
-    g.box(deck, xm, y - 0.25, 0, (x1 - x0) + 0.05, 0.5, W, 0.35);
-    g.box(stone, xm, y + 0.5, W / 2 - 0.25, (x1 - x0) + 0.05, 1.0, 0.5, 0.4);
-    g.box(stone, xm, y + 0.5, -W / 2 + 0.25, (x1 - x0) + 0.05, 1.0, 0.5, 0.4);
-    const slope = Math.atan2(-Math.sin((xm / L) * Math.PI) * 1.2 * Math.PI / L, 1);
-    const qq = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), b.yaw).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), slope));
-    const c = new THREE.Vector3(xm, y - 0.25, 0).applyMatrix4(g.matrix);
-    out.colliders.push({ c, h: new THREE.Vector3((x1 - x0) / 2 + 0.1, 0.25, W / 2), q: qq });
-    for (const s of [1, -1]) out.colliders.push({ c: new THREE.Vector3(xm, y + 0.5, s * (W / 2 - 0.25)).applyMatrix4(g.matrix), h: new THREE.Vector3((x1 - x0) / 2 + 0.1, 0.5, 0.25), q: qq });
+    const y0 = deckY(x0), y1 = deckY(x1), ym = (y0 + y1) / 2;
+    const len = Math.hypot(x1 - x0, y1 - y0), slope = Math.atan2(y1 - y0, x1 - x0);
+    g.push().translate(xm, ym, 0).rotateZ(slope);
+    g.box(deck, 0, -0.3, 0, len + 0.04, 0.6, W, 0.35);
+    for (const sd of [1, -1]) {
+      g.box(stone2, 0, 0.45, sd * (W / 2 - 0.25), len + 0.04, 0.9, 0.5, 0.4);
+      g.box(coping, 0, 0.95, sd * (W / 2 - 0.25), len + 0.04, 0.12, 0.62, 0.6);
+    }
+    g.pop();
+    const qq = yawQ.clone().multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), slope));
+    out.colliders.push({ c: new THREE.Vector3(xm, ym - 0.3, 0).applyMatrix4(g.matrix), h: new THREE.Vector3(len / 2 + 0.05, 0.3, W / 2), q: qq });
+    for (const sd of [1, -1]) out.colliders.push({ c: new THREE.Vector3(xm, ym + 0.5, sd * (W / 2 - 0.25)).applyMatrix4(g.matrix), h: new THREE.Vector3(len / 2 + 0.05, 0.5, 0.28), q: qq });
   }
-  // piers and arches
-  const piers = 3;
-  for (let i = 0; i <= piers; i++) {
-    const px = -L / 2 + 6 + (i / piers) * (L - 12);
-    const wx = b.x + ax * px, wz = b.z + az * px;
-    const gy = ground(wx, wz) - 2;
-    const top = b.deck + Math.cos((px / L) * Math.PI) * 1.2 - 0.5;
-    g.box(stone, px, (gy + top) / 2, 0, 3.0, top - gy, W - 0.4, 0.3);
-    // cutwaters
-    g.push().translate(px, gy, 0).rotateY(Math.PI / 4); g.box(stone, 0, (top - gy) * 0.35, 0, 2.2, (top - gy) * 0.7, 2.2, 0.3); g.pop();
-    out.colliders.push({ c: new THREE.Vector3(px, (gy + top) / 2, 0).applyMatrix4(g.matrix), h: new THREE.Vector3(1.5, (top - gy) / 2, W / 2 - 0.2), q: q(b.yaw) });
-    if (i < piers) {
-      // arch: a ring of blocks between this pier and the next
-      const nx = -L / 2 + 6 + ((i + 1) / piers) * (L - 12);
-      const span = nx - px - 3, cxm = (px + nx) / 2, rr = span / 2;
-      const base = b.deck - 3.2;
-      for (let k = 0; k <= 10; k++) {
-        const a = Math.PI * (k / 10);
-        g.push().translate(cxm - Math.cos(a) * rr, base + Math.sin(a) * rr * 0.8, 0).rotateZ(-a + Math.PI / 2);
-        g.box(stone, 0, 0, 0, 0.7, span / 10 + 0.3, W - 0.4, 0.4);
-        g.pop();
-      }
-      // spandrel fill
-      g.box(stone, cxm, base + rr * 0.8 + (b.deck - 0.5 - base - rr * 0.8) / 2, 0, span * 0.7, Math.max(0.2, b.deck - 0.5 - base - rr * 0.8), W - 0.4, 0.3);
+  // ---- piers wherever the deck stands well clear of the ground, spans of ~16 m ----
+  const piers: number[] = [];
+  const nSpan = Math.max(2, Math.round((L - 8) / 16));
+  for (let i = 0; i <= nSpan; i++) {
+    const px = -L / 2 + 4 + (i / nSpan) * (L - 8);
+    if (deckY(px) - gAt(px) > 1.2) piers.push(px);
+  }
+  // abutments: where the deck leaves the bank, a solid stone ramp down to the ground with wing walls
+  for (const s of [-1, 1]) {
+    const xe = s * L / 2;
+    let xin = xe;
+    for (let k = 0; k < 40; k++) { const xx = xe - s * k; if (deckY(xx) - gAt(xx) > 1.2) break; xin = xx; }
+    const xa = Math.min(xe, xin), xb = Math.max(xe, xin), mid = (xa + xb) / 2;
+    const lo = Math.min(gAt(xa), gAt(xb), gAt(mid)) - 1.5, hi = deckY(mid) - 0.55;
+    if (xb - xa > 0.5 && hi > lo) {
+      g.box(stone, mid, (lo + hi) / 2, 0, xb - xa + 0.5, hi - lo, W - 0.3, 0.3);
+      for (const sd of [1, -1]) { g.push().translate(xe - s * 2, 0, sd * (W / 2 + 1.2)).rotateY(sd * s * 0.5); g.box(stone, 0, (lo + deckY(xe) + 0.6) / 2, 0, 5, deckY(xe) + 0.6 - lo, 0.7, 0.3); g.pop(); }
+    }
+  }
+  for (const px of piers) {
+    const gy = gAt(px) - 2.5, top = deckY(px) - 0.6;
+    g.box(stone, px, (gy + top) / 2, 0, 3.0, top - gy, W - 0.3, 0.3);
+    // cutwaters up- and downstream, pointed, rising to just above the high-water mark
+    const cwTop = Math.min(top, waterY + 2.5);
+    if (cwTop > gy + 0.5) for (const sd of [1, -1]) { g.push().translate(px, (gy + cwTop) / 2, sd * (W / 2 - 0.15)).rotateY(Math.PI / 4); g.box(stone, 0, 0, 0, 2.1, cwTop - gy, 2.1, 0.3); g.pop(); }
+    out.colliders.push({ c: new THREE.Vector3(px, (gy + top) / 2, 0).applyMatrix4(g.matrix), h: new THREE.Vector3(1.5, (top - gy) / 2, W / 2 - 0.15), q: q(b.yaw) });
+  }
+  // ---- segmental arches between neighbouring piers, below the deck; spandrel fill up to the road ----
+  for (let i = 0; i + 1 < piers.length; i++) {
+    const p0 = piers[i] + 1.5, p1 = piers[i + 1] - 1.5;
+    const span = p1 - p0, cxm = (p0 + p1) / 2;
+    if (span < 2) continue;
+    const crown = deckY(cxm) - 1.0;
+    const floor = Math.max(gAt(p0), gAt(p1), waterY + 0.6);
+    const rise = Math.min(span * 0.42, crown - floor - 0.3);
+    if (rise < 0.8) { g.box(stone, cxm, crown, 0, span, 0.9, W - 0.3, 0.3); continue; }
+    const c = span / 2, R = (c * c + rise * rise) / (2 * rise), cy = crown - R, th = Math.asin(Math.min(1, c / R));
+    const nv = Math.max(9, Math.round(span * 1.2));
+    for (let k = 0; k < nv; k++) {
+      const a = -th + (2 * th) * ((k + 0.5) / nv);
+      g.push().translate(cxm + R * Math.sin(a), cy + R * Math.cos(a), 0).rotateZ(-a);
+      g.box(k % 2 ? stone : stone2, 0, 0, 0, (2 * th * R) / nv + 0.04, 0.75, W - 0.3, 0.4);
+      g.pop();
+    }
+    // spandrel: solid masonry between the arch's back and the road, in vertical slices
+    const ns = Math.max(6, Math.round(span / 1.5));
+    for (let k = 0; k < ns; k++) {
+      const xa = p0 + (k / ns) * span, xb = p0 + ((k + 1) / ns) * span, xm = (xa + xb) / 2;
+      const u = (xm - cxm) / R;
+      const archTop = cy + Math.sqrt(Math.max(0, R * R - (xm - cxm) ** 2)) + 0.3;
+      const top = deckY(xm) - 0.55;
+      if (top - archTop > 0.05) g.box(stone, xm, (archTop + top) / 2, 0, xb - xa + 0.05, top - archTop, W - 0.3, 0.3);
+      void u;
     }
   }
   // lamp posts at each end
-  for (const s of [-1, 1]) out.torches.push(new THREE.Vector3(s * (L / 2 - 1), b.deck + 2.4, W / 2 - 0.25).applyMatrix4(g.matrix));
+  for (const s of [-1, 1]) out.torches.push(new THREE.Vector3(s * (L / 2 - 1.5), deckY(s * (L / 2 - 1.5)) + 2.4, W / 2 - 0.25).applyMatrix4(g.matrix));
   g.pop();
   return out;
 }

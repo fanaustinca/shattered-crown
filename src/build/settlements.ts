@@ -6,6 +6,7 @@ import { RAPIER, groups, G_STATIC, ALL, type Physics } from '../physics/physics'
 import type { World } from '../world/world';
 import { Towns, type Placed, type TownPlan } from '../world/towns';
 import { generateBuilding, type BuildingModel } from './building';
+import { riverLevel } from '../world/layout';
 import { buildWalls, buildBridge, buildDock, fenceRect, well, stall, haystack, lampPost, type StructModel } from './structures';
 import { GeoBuilder } from './geom';
 import { BatchPool, type BatchHandle } from '../render/batch';
@@ -159,7 +160,7 @@ export class Settlements {
     const minor = this.towns.plans.filter((p) => p.minor);
     const lod = this.buildTownLod('countryside', minor.flatMap((p) => p.buildings));
     for (const p of minor) this.townLod.set(p.site.id, lod);
-    for (const b of this.world.bridges) add(buildBridge(b, ground));
+    for (const b of this.world.bridges) add(buildBridge(b, ground, riverLevel(b.z)));
     this.structures.updateMatrixWorld(true);
   }
   private buildTownLod(key: string, buildings: Placed[]) {

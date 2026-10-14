@@ -44,6 +44,9 @@ export class NPC {
   waitT = 0;
   lastSeenPlayer = -1e9;
   doorCooldown = 0;
+  /** in conversation: with the player, or with another resident (they stop and face each other) */
+  talkPartner: NPC | 'player' | null = null;
+  chatCooldown = 5 + Math.random() * 30;
   get name() { return this.person.name; }
   get alive() { return this.activity !== 'dead'; }
   constructor(public game: Game, public person: Person, pos: THREE.Vector3) {
@@ -154,7 +157,7 @@ export class NPC {
   /** Fixed-step movement and decisions. */
   step(dt: number) {
     const g = this.game, st = this.st;
-    this.bubbleT -= dt; this.doorCooldown -= dt;
+    this.bubbleT -= dt; this.doorCooldown -= dt; this.chatCooldown -= dt;
     if (!this.alive) { st.speed = 0; return; }
     if (this.bleeding > 0) { this.health.torso -= this.bleeding * dt; if (this.health.torso <= 0) { this.die(); return; } }
     const p = g.player;
@@ -192,6 +195,14 @@ export class NPC {
       if (d < 3 && this.sayT <= 0) { this.say(`Halt! You owe ${g.law.bountyIn(this.person.faction as Kingdom)} pennies to the crown. Pay, or face the cells.`, true); this.sayT = 8; }
       this.sayT -= dt;
       if (g.law.bountyIn(this.person.faction as Kingdom) <= 0) this.activity = 'patrol';
+    } else if (this.talkPartner) {
+      // in conversation: stand and face whoever we're talking to (the route waits)
+      const other = this.talkPartner === 'player' ? p.pos : this.talkPartner.st.pos;
+      st.look = this.talkPartner === 'player' ? p.eyePos() : this.talkPartner.eye;
+      const want = Math.atan2(other.x - st.pos.x, other.z - st.pos.z);
+      let dy = want - st.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+      st.yaw += THREE.MathUtils.clamp(dy * 4, -3, 3) * dt;
+      st.action = 'idle';
     } else {
       // scheduled life: follow the path toward where the schedule says we should be
       if (this.path.length) {

@@ -38,6 +38,7 @@ import type { Placed } from './world/towns';
 import { VERSION } from './version';
 import { frameStamp, flushBoneAtlas } from './creature/rig';
 import { Music } from './core/music';
+import { Talk } from './npc/talk';
 import { ClothSystem } from './render/cloth';
 
 export type Progress = (f: number, msg: string) => void;
@@ -137,6 +138,7 @@ export class Game {
   treeColliders = new Map<number, unknown>();
   frameMs = 16;
   music = new Music();
+  talk = new Talk(this);
   private clothDt = 0;
   cloth!: ClothSystem;
   get clothOn() { return settings.cloth; }
@@ -408,6 +410,7 @@ export class Game {
     const aiDt = Math.min(simDt, 0.1);
     this.fauna.step(aiDt);
     this.residents.step(aiDt);
+    this.talk.update(aiDt);
     this.war.step(aiDt);
     this.mark('ai');
     this.physics.update(simDt);

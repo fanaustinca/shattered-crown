@@ -3,11 +3,13 @@
 import * as THREE from 'three';
 import type { Game } from '../game';
 import { VERSION } from '../version';
+import { CHANGELOG } from '../changelog';
 import { settings, saveSettings, QUALITY, type QualityName } from '../core/settings';
 import { ITEMS } from '../props/items';
 import { Grid, freshness, freshLabel, type InvItem } from '../player/inventory';
 import { LIMBS, type Limb } from '../player/player';
 import type { NPC } from '../npc/npc';
+import type { DNode } from '../npc/talk';
 import { kingdomAt, nearestSite, HALF } from '../world/layout';
 import { DESIGN_COUNT, enumerateCatalog } from '../props/furniture';
 
@@ -190,7 +192,37 @@ export class UI {
         sec.querySelector('.s')!.addEventListener('click', () => { this.game.save(); });
         sec.querySelector('.l')!.addEventListener('click', () => { this.game.load(); this.close(); });
       } else if (t === 'help') {
-        sec.innerHTML = `<h2>Controls & Help</h2><div class="help">${HELP.map((h) => `<div class="hs"><h3>${h.title}</h3><table>${h.rows.map(([k, v]) => `<tr><td><kbd>${k}</kbd></td><td>${v}</td></tr>`).join('')}</table></div>`).join('')}</div>`;
+        sec.innerHTML = `<h2>Help</h2><div class="subtabs"><button data-h="controls" class="on">Controls</button><button data-h="new">What's new</button><button data-h="items">Items</button></div><div class="hbody"></div>`;
+        const body = sec.querySelector('.hbody') as HTMLElement;
+        const hshow = (h: string) => {
+          sec.querySelectorAll('.subtabs button').forEach((b) => b.classList.toggle('on', (b as HTMLElement).dataset.h === h));
+          if (h === 'controls') body.innerHTML = `<div class="help">${HELP.map((x) => `<div class="hs"><h3>${x.title}</h3><table>${x.rows.map(([k, v]) => `<tr><td><kbd>${k}</kbd></td><td>${v}</td></tr>`).join('')}</table></div>`).join('')}</div>`;
+          else if (h === 'new') body.innerHTML = `<div class="news">${CHANGELOG.map((c) => `<h3>v${c.v} <small>${c.date}</small></h3><ul>${c.items.map((i) => `<li>${i}</li>`).join('')}</ul>`).join('')}</div>`;
+          else {
+            const KIND: Record<string, string> = { food: 'Food', drink: 'Drink', weapon: 'Weapons', shield: 'Shields', tool: 'Tools', container: 'Containers', material: 'Materials', valuable: 'Valuables', medical: 'Medicine', light: 'Lights', ammo: 'Ammunition', key: 'Keys', misc: 'Other' };
+            const groups = new Map<string, typeof ITEMS[string][]>();
+            for (const d of Object.values(ITEMS)) { const k = KIND[d.kind] ?? 'Other'; if (!groups.has(k)) groups.set(k, []); groups.get(k)!.push(d); }
+            const use = (d: typeof ITEMS[string]) => {
+              const u: string[] = [];
+              if (d.food) u.push(`Eat with Q: +${d.food.nutrition} food, ${d.food.raw ? 'better cooked, ' : ''}spoils in ~${d.food.spoilDays} days`);
+              if (d.weapon) u.push(`Weapon: ${d.weapon.damage} damage, ${d.weapon.reach} m reach, ${d.weapon.type}${d.hold === 'two' ? ', two-handed' : ''}`);
+              if (d.container) u.push(`Holds a ${d.container.w}×${d.container.h} grid${d.container.open ? '; things dropped in stay in' : ''}`);
+              if (d.breakable) u.push('Breaks if thrown hard');
+              if (d.kind === 'medical') u.push('B to bandage: stops bleeding');
+              if (d.kind === 'light') u.push('E to light / put out');
+              if (d.id === 'lockpick') u.push('Pick locks on doors and chests');
+              if (d.id === 'rope') u.push('X on an animal to lead it');
+              if (d.id === 'saddlebag' || d.id === 'sack') u.push('Strap onto a horse or donkey (E near it)');
+              if (d.id === 'salt') u.push('Salt raw meat (right-click it) to keep it for months');
+              return u.join(' · ');
+            };
+            body.innerHTML = `<input class="isearch" placeholder="Search items…"><div class="items">${[...groups.entries()].map(([k, list]) => `<div class="ig"><h3>${k}</h3><table>${list.sort((a, b) => a.name.localeCompare(b.name)).map((d) => `<tr data-n="${(d.name + ' ' + d.desc).toLowerCase()}"><td><b>${d.name}</b><br><span class="dim">${d.mass} kg · ${d.value}d · ${d.inv[0]}×${d.inv[1]}</span></td><td>${d.desc}${use(d) ? `<br><em>${use(d)}</em>` : ''}</td></tr>`).join('')}</table></div>`).join('')}</div>`;
+            const inp = body.querySelector('.isearch') as HTMLInputElement;
+            inp.addEventListener('input', () => { const q = inp.value.toLowerCase(); body.querySelectorAll('tr[data-n]').forEach((r) => { (r as HTMLElement).style.display = (r as HTMLElement).dataset.n!.includes(q) ? '' : 'none'; }); });
+          }
+        };
+        sec.querySelectorAll('.subtabs button').forEach((b) => b.addEventListener('click', () => hshow((b as HTMLElement).dataset.h!)));
+        hshow('controls');
       } else if (t === 'settings') {
         sec.innerHTML = `<h2>Settings</h2><div class="settings">
           <label>Graphics quality <select class="q">${(Object.keys(QUALITY) as QualityName[]).map((q) => `<option ${q === settings.quality ? 'selected' : ''}>${q}</option>`).join('')}</select></label>
@@ -314,21 +346,37 @@ export class UI {
     const g = this.game;
     this.screen = 'dialogue';
     const pers = n.person;
-    const k = pers.faction;
-    const night = g.hours > 21 || g.hours < 6;
-    const greet = n.hostile ? 'You! Back away!' : night ? 'It\'s late, stranger. What do you want?' : pers.role === 'guard' ? `Move along, citizen of ${k === 'ironreach' ? 'nowhere' : 'the crown'}… unless you've business with the watch.` : pers.role === 'innkeeper' ? 'Welcome! Ale, a hot meal, or a bed for the night?' : pers.role === 'merchant' ? 'Fine goods, fair prices. Mostly fair.' : pers.role === 'farmer' ? 'Harvest won\'t bring itself in. Something you need?' : 'Good day to you.';
-    const opts: [string, () => void][] = [];
-    opts.push(['What news of the war?', () => say(g.war.rumour(k as never))]);
-    opts.push(['Where can I find…?', () => say(`The tavern is ${dirTo(g, n.st.pos, 'tavern')}. The smithy is ${dirTo(g, n.st.pos, 'smithy')}. Stables by the gate, if you need a horse or a cart.`)]);
-    opts.push([`Tell me about yourself.`, () => say(`I'm ${pers.name}, ${pers.role === 'spouse' ? 'and this is my family\'s home' : 'a ' + pers.role} of ${g.towns.byBuilding.get(pers.home)?.site ?? 'these parts'}. ${pers.age > 50 ? 'Seen more winters than I care to count.' : 'Been here all my life.'}`)]);
-    if (pers.role === 'innkeeper') opts.push(['Rent a room (10 pennies)', () => { if (g.interaction.money >= 10) { g.interaction.money -= 10; g.rentedRoom = pers.home; say('Upstairs, second door. Sleep well.'); } else say('Come back when you have coin.'); }]);
-    if (pers.role === 'merchant' || pers.role === 'innkeeper' || pers.role === 'blacksmith') opts.push(['Let\'s trade.', () => this.openTrade(n)]);
-    if (pers.role === 'guard' && g.law.bountyIn(k as never) > 0) opts.push([`Pay my fine (${g.law.bountyIn(k as never)} pennies)`, () => { g.law.payFine(n); this.close(); }]);
-    if (pers.role === 'guard') opts.push(['I want to fight for this kingdom.', () => { g.war.enlist(k as never); say('Report to the sergeant at the bridge camp. Bring a blade.'); }]);
-    opts.push(['Farewell.', () => this.close()]);
-    const p = this.mount(`<div class="dlg"><h2>${n.name} <small>${pers.role}</small></h2><p class="line">${greet}</p><div class="opts">${opts.map(([l], i) => `<button data-i="${i}">${l}</button>`).join('')}</div></div>`, 'dlgpanel');
-    const say = (t: string) => { (p.querySelector('.line') as HTMLElement).textContent = t; };
-    p.querySelectorAll('.opts button').forEach((b) => b.addEventListener('click', () => opts[+(b as HTMLElement).dataset.i!][1]()));
+    const p = this.mount(`<div class="dlg"><h2>${n.name} <small>${pers.role}</small></h2><div class="log"></div><div class="opts"></div><p class="dim">1–9 to choose · Esc to leave</p></div>`, 'dlgpanel');
+    const log = p.querySelector('.log') as HTMLElement, opts = p.querySelector('.opts') as HTMLElement;
+    const add = (who: string, text: string, me = false) => {
+      log.insertAdjacentHTML('beforeend', `<div class="${me ? 'me' : 'them'}"><b>${who}:</b> ${text}</div>`);
+      while (log.children.length > 14) log.firstElementChild!.remove();
+      log.scrollTop = log.scrollHeight;
+    };
+    let node = g.talk.begin(n);
+    const show = (d: DNode) => {
+      node = d;
+      add(n.name, d.line);
+      g.talk.playerSpeakT = 1 + d.line.split(' ').length * 0.28;
+      opts.innerHTML = d.options.map((o, i) => `<button data-i="${i}"><kbd>${i + 1}</kbd> ${o.label}</button>`).join('');
+      opts.querySelectorAll('button').forEach((bt) => bt.addEventListener('click', () => choose(+(bt as HTMLElement).dataset.i!)));
+    };
+    const choose = (i: number) => {
+      const o = node.options[i];
+      if (!o) return;
+      add('You', o.label, true);
+      const next = o.go();
+      if (this.screen !== 'dialogue') { window.removeEventListener('keydown', onKey); return; }   // went to trade, a fight…
+      if (!next) { window.removeEventListener('keydown', onKey); g.talk.end(); this.close(); return; }
+      show(next);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (this.screen !== 'dialogue') { window.removeEventListener('keydown', onKey); return; }
+      const m = /^Digit([1-9])$/.exec(e.code);
+      if (m) { e.preventDefault(); choose(+m[1] - 1); }
+    };
+    window.addEventListener('keydown', onKey);
+    show(node);
   }
   openTrade(n: NPC) {
     const g = this.game, ia = g.interaction;
@@ -360,12 +408,3 @@ export class UI {
   }
 }
 
-function dirTo(g: Game, from: THREE.Vector3, type: string) {
-  const plan = g.towns.plans.find((p) => Math.hypot(p.site.x - from.x, p.site.z - from.z) < p.site.r * 1.5);
-  const b = plan?.buildings.find((x) => x.spec.type === type);
-  if (!b) return 'not in this town';
-  const dx = b.x - from.x, dz = b.z - from.z;
-  const ang = Math.atan2(dx, -dz);
-  const dirs = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
-  return `${Math.round(Math.hypot(dx, dz))} paces to the ${dirs[Math.round(((ang + Math.PI * 2) % (Math.PI * 2)) / (Math.PI / 4)) % 8]}`;
-}
