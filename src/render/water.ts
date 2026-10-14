@@ -40,7 +40,7 @@ export function seaHeight(x: number, z: number, t: number, amp: number, rot = wa
   let y = 0;
   const cr = Math.cos(rot), sr = Math.sin(rot);
   const depth = seaFloor ? Math.max(0, -seaFloor(x, z)) : 50;
-  const wind = amp * ss(0, 7, depth), swell = waterUniforms.uSwell.value * ss(6, 60, depth);
+  const wind = amp * ss(0, 7, depth), swell = waterUniforms.uSwell.value * ss(6, 40, depth);
   for (const [set, A] of [[WAVES, wind], [SWELLS, swell]] as const) {
     if (A <= 0) continue;
     for (const [dx0, dz0, st, L] of set) {
@@ -127,7 +127,7 @@ void main() {
       vCrest += max(0.0, s) * WV[i].z * amp;
     }
     // the long swell, building offshore
-    float sa = uSwell * smoothstep(6.0, 60.0, depth) * (1.0 - smoothstep(3000.0, 9000.0, dist));
+    float sa = uSwell * smoothstep(6.0, 40.0, depth) * (1.0 - smoothstep(3000.0, 9000.0, dist));
     if (sa > 0.001) for (int i = 0; i < NS; i++) {
       vec2 d = mat2(cos(uWaveRot), sin(uWaveRot), -sin(uWaveRot), cos(uWaveRot)) * normalize(SV[i].xy);
       float k = 6.2831853 / SV[i].w, c = sqrt(9.8 / k);

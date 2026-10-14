@@ -114,6 +114,17 @@ export class Ship implements Interactable {
   reload = { 1: 0, [-1]: 0 } as Record<number, number>;
   side: 'vanguardia' | 'ironreach' | null = null;
   hp = 1;
+  detail: RAPIER.Collider[] | null = null;
+  coarse: RAPIER.Collider | null = null;
+  private detailed = true;
+  /** Swap between the full deck/hull colliders (someone is close) and one hull block (no one is). */
+  setDetail(on: boolean) {
+    if (!this.detail || on === this.detailed) return;
+    this.detailed = on;
+    for (const c of this.detail) c.setEnabled(on);
+    for (const d of this.doors) d.collider.setEnabled(on);
+    this.coarse?.setEnabled(!on);
+  }
   /** fraction of normal buoyancy (falls as a holed ship fills) */
   buoyScale = 1;
   dispose() {
@@ -142,8 +153,9 @@ export class Ship implements Interactable {
       this.mass = plan.spec.mass;
       this.length = plan.spec.L; this.beam = plan.spec.B; this.draft = plan.spec.draft;
       this.deckY = plan.deckY; this.waterline = plan.waterline;
-      this.body = ph.world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(pos.x, pos.y - this.waterline, pos.z).setRotation(q).setLinearDamping(0.0).setAngularDamping(0.6));
+      this.body = ph.world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(pos.x, pos.y - this.waterline, pos.z).setRotation(q).setLinearDamping(0.0).setAngularDamping(0.3));
       const n = plan.colliders.length;
+      this.detail = [];
       plan.colliders.forEach((c, i) => {
         // ballast: most of the weight low in the keel collider (the first one added is not the keel; find it by size)
         const d = RAPIER.ColliderDesc.cuboid(c.h.x, c.h.y, c.h.z).setTranslation(c.c.x, c.c.y, c.c.z).setFriction(0.9).setCollisionGroups(groups(G_VEHICLE, ALL));
@@ -151,8 +163,13 @@ export class Ship implements Interactable {
         d.setMass(this.mass * 0.04 / n);
         const col = ph.world.createCollider(d, this.body);
         ph.owners.set(col.handle, owner);
+        this.detail!.push(col);
         void i;
       });
+      // far away a ship is one solid block of hull (the decks, walls and ladders only matter up close)
+      const cd = RAPIER.ColliderDesc.cuboid(this.length * 0.42, plan.deckY / 2, this.beam * 0.36).setTranslation(0, plan.deckY / 2, 0).setMass(1).setCollisionGroups(groups(G_VEHICLE, ALL));
+      this.coarse = ph.world.createCollider(cd, this.body);
+      ph.owners.set(this.coarse.handle, owner);
       // ballast and frames low and on the centreline
       const kd = RAPIER.ColliderDesc.cuboid(this.length * 0.35, 0.3, 0.6).setTranslation(0, this.plan.spec.decks[0] * 0.5, 0).setMass(this.mass * 0.96).setCollisionGroups(groups(G_VEHICLE, ALL));
       ph.owners.set(ph.world.createCollider(kd, this.body).handle, owner);
@@ -164,6 +181,7 @@ export class Ship implements Interactable {
       ph.owners.set(wc.handle, { kind: 'movable_ship_wheel', interact: { name: () => `${this.name_} — ship's wheel`, actions: (g: Game) => this.helmActions(g) } });
       for (const sd of plan.sails) this.buildSail(sd);
       for (const d of plan.doors) this.doors.push(new ShipDoor(this, this.model, d.pos, d.yaw, d.w, d.h, d.hinge));
+      this.setDetail(false);
       this.lamps = plan.lights;
       for (let i = 0; i < plan.hammocks.length; i++) {
         const hp = plan.hammocks[i];
@@ -419,6 +437,10 @@ export class Ship implements Interactable {
     this.root.position.copy(this.pos);
     this.root.quaternion.copy(this.quat);
     for (const d of this.doors) d.update(dt);
+    if (this.detail) {
+      const g = this.game, near = Math.min(this.root.position.distanceTo(g.player.pos), this.root.position.distanceTo(g.camera.position));
+      this.setDetail(near < this.length + 120 || (this.detailed && near < this.length + 150));
+    }
     // the decks below and everything on them are only drawn when you could see them
     if (this.plan) { const dc = this.root.position.distanceTo(this.game.camera.position); this.hold.visible = dc < this.length * 1.6 + 40; }
     this.wheel.rotation.x = this.rudder * 4;

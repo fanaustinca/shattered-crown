@@ -11,13 +11,15 @@ for (const [name, kind, t] of [['sea-calm', 'clear', 11], ['sea-storm', 'storm',
   await page.evaluate((kind, t) => {
     const g = SC.game; g.manual = true;
     weather(kind); SC.setTime(t);
-    const ship = g.ships.find((s) => s.kind === 'ship');
+    const ship = g.ships.find((s) => s.cls === 'manowar') ?? g.ships.find((s) => s.kind === 'ship');
+    let rmax = 0, pmax = 0;
     for (let i = 0; i < 240; i++) { g.weather.update(1 / 60 * 50); g.step(1 / 60); }
+    for (let i = 0; i < 1200; i++) { g.step(1 / 60); const e = new SC.THREE.Euler().setFromQuaternion(ship.quat, 'YXZ'); rmax = Math.max(rmax, Math.abs(e.x)); pmax = Math.max(pmax, Math.abs(e.z)); }
     const p = ship.pos;
     g.freeCam = true;
-    g.camera.position.set(p.x + 30, p.y + 9, p.z + 26); g.camera.lookAt(p.x, p.y + 4, p.z);
+    g.camera.position.set(p.x + 75, p.y + 18, p.z + 60); g.camera.lookAt(p.x, p.y + 8, p.z);
     for (let i = 0; i < 2; i++) g.renderFrame();
-    window.__roll = [ship.roll, ship.pitch, g.weather.cur.wind];
+    window.__roll = [rmax, pmax, g.weather.cur.wind, SC.game && 0];
   }, kind, t);
   await page.screenshot({ path: `tests/screenshots/${name}.png` });
   console.log(name, await page.evaluate(() => window.__roll.map((v) => v.toFixed(3))));
