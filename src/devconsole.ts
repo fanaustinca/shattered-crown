@@ -48,6 +48,15 @@ export function installDevConsole(game: Game) {
       g.carts.push(new Cart(g, p, g.player.yaw + Math.PI / 2, Math.floor(Math.random() * 10)));
       return say('A cart rolls up. Hitch a horse or donkey to it (E at the shafts).');
     },
+    /** a wagon with a team of n horses already in harness */
+    team: (n = 2, species: 'horse' | 'donkey' = 'horse') => {
+      const p = ahead(9);
+      p.y += 0.6;
+      const c = new Cart(g, p, g.player.yaw + Math.PI, Math.floor(Math.random() * 10));
+      g.carts.push(c);
+      for (let i = 0; i < Math.min(4, n); i++) c.hitch(g.spawnAnimal(species, ahead(12 + i * 2, (i % 2 ? 1 : -1))));
+      return say(`A wagon with ${Math.min(4, n)} ${species}s in harness. E on the bench to drive.`);
+    },
     ship: (kind: 'ship' | 'boat' = 'ship') => {
       const w = water();
       if (!w) return say('No water deep enough nearby.');
@@ -102,7 +111,8 @@ export function installDevConsole(game: Game) {
     help: () => {
       const rows: [string, string][] = [
         ['spawn.horse(n) / donkey / cow / pig', 'animals in front of you'],
-        ['spawn.cart()', 'a wagon (hitch an animal with E at the shafts)'],
+        ['spawn.cart()', 'a wagon (lead a horse to it and press X to hitch; up to 4)'],
+        ['spawn.team(n)', 'a wagon with a team of 1–4 horses in harness'],
         ['spawn.ship() / spawn.boat()', 'a sailing ship / rowing boat on the nearest water'],
         ['spawn.army(side, n)', "soldiers ('vanguardia' | 'ironreach') formed up ahead"],
         ['spawn.column(side, n)', 'a column marching down the nearest road to the front'],

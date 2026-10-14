@@ -189,7 +189,7 @@ export class Animal implements Seat {
     const wl = ctx.world.waterLevelAt(t.x + desired.x * 8, t.z + desired.z * 8);
     if (this.mode !== 'ridden' && wl > ctx.groundAt(t.x + desired.x * 8, t.z + desired.z * 8) + 0.9) { desired.x = 0; desired.z = 0; this.pickWander(); }
     this.body.setNextKinematicRotation(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), st.yaw));
-    this.kcc.computeColliderMovement(this.collider, desired, RAPIER.QueryFilterFlags.EXCLUDE_SENSORS, groups(G_CHAR, (G_STATIC | G_CHAR | 2 | 16) & ~(this.rider ? G_CHAR : 0)), (c) => c.handle !== this.rider?.collider.handle);
+    this.kcc.computeColliderMovement(this.collider, desired, RAPIER.QueryFilterFlags.EXCLUDE_SENSORS, groups(G_CHAR, this.mode === 'hitched' ? G_STATIC : (G_STATIC | G_CHAR | 2 | 16) & ~(this.rider ? G_CHAR : 0)), (c) => c.handle !== this.rider?.collider.handle);
     const mv = this.kcc.computedMovement();
     const nt = { x: t.x + mv.x, y: t.y + mv.y, z: t.z + mv.z };
     this.body.setNextKinematicTranslation(nt);
