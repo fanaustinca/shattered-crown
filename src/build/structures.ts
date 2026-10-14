@@ -21,7 +21,7 @@ export function buildWalls(plan: WallPlan, ground: (x: number, z: number) => num
   let stone = pal[0];
   const H = plan.height, T = 2.6;
   const n = plan.pts.length;
-  const cx = plan.pts.reduce((s, p) => s + p[0], 0) / n, cz = plan.pts.reduce((s, p) => s + p[1], 0) / n;
+  const cx = plan.center?.[0] ?? plan.pts.reduce((s, p) => s + p[0], 0) / n, cz = plan.center?.[1] ?? plan.pts.reduce((s, p) => s + p[1], 0) / n;
   for (let i = 0; i < n; i++) {
     const a = plan.pts[i], b = plan.pts[(i + 1) % n];
     const mx = (a[0] + b[0]) / 2, mz = (a[1] + b[1]) / 2;

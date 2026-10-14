@@ -137,11 +137,13 @@ export class Settlements {
       this.torches.push(...s.torches);
       if (s.flags) this.flags.push(...s.flags);
     };
+    // lone farmsteads share one structure model and one far-LOD mesh set (one draw per material for all of them)
+    const country: StructModel = { geo: new GeoBuilder(), colliders: [], gates: [], torches: [] };
     for (const p of this.towns.plans) {
       if (p.walls) add(buildWalls(p.walls, ground));
       for (const d of p.docks) add(buildDock(d.x, d.z, d.yaw, d.len, ground));
       // the life of the town: fences, wells, market stalls, haystacks, street torches
-      const town: StructModel = { geo: new GeoBuilder(), colliders: [], gates: [], torches: [] };
+      const town: StructModel = p.minor ? country : { geo: new GeoBuilder(), colliders: [], gates: [], torches: [] };
       for (const gd of p.gardens) fenceRect(town, gd.x, gd.z, gd.w + 0.4, gd.d + 0.4, gd.yaw, ground, 'wood:weathered|stain:honey|fin:raw', 1.4);
       for (const pd of p.paddocks) fenceRect(town, pd.x, pd.z, pd.w, pd.d, pd.yaw, ground, 'wood:worn|stain:walnut|fin:raw', 0);
       for (const o of p.orchards) fenceRect(town, o.x, o.z, o.w + 2, o.d + 2, o.yaw, ground, 'wood:weathered|stain:natural|fin:raw', 3);
@@ -149,13 +151,19 @@ export class Settlements {
       p.stalls.forEach((st, i) => stall(town, st.x, st.z, st.yaw, st.goods, ground, i + p.site.x));
       p.haystacks.forEach(([x, z], i) => haystack(town, x, z, ground, 0.8 + (i % 3) * 0.15));
       for (const [x, z] of p.lamps) lampPost(town, x, z, ground);
+      if (p.minor) continue;
       add(town);
-      this.buildTownLod(p);
+      this.buildTownLod(p.site.id, p.buildings);
     }
+    add(country);
+    const minor = this.towns.plans.filter((p) => p.minor);
+    const lod = this.buildTownLod('countryside', minor.flatMap((p) => p.buildings));
+    for (const p of minor) this.townLod.set(p.site.id, lod);
     for (const b of this.world.bridges) add(buildBridge(b, ground));
     this.structures.updateMatrixWorld(true);
   }
-  private buildTownLod(p: TownPlan) {
+  private buildTownLod(key: string, buildings: Placed[]) {
+    const p = { buildings };
     // simple boxes + gable roofs for every building of the town, merged per material
     const g = new GeoBuilder();
     const bid: Record<string, number[]> = {};
@@ -165,8 +173,9 @@ export class Settlements {
       const s = b.spec;
       const H = 0.35 + (s.type === 'chapel' || s.type === 'hall' ? 6 : s.type === 'stable' || s.type === 'barn' || s.type === 'warehouse' ? 4.5 : 3) * s.floors;
       // same stone/plaster family as the detailed building, darkened a touch for the far view
-      const wallK = s.style === 'stone' ? 'mat:medieval_blocks_02|tint:c8c0b0' : s.style === 'dark' ? 'mat:castle_wall_slates|tint:9a9a9a' : s.style === 'rustic' ? 'mat:stacked_stone_wall|tint:b0a898' : s.style === 'plaster' ? 'mat:white_plaster_rough_01|tint:d8d0c0' : 'mat:plastered_wall_02|tint:d0c4ac';
-      const roofK = s.roof === 'thatch' ? 'mat:thatch_roof_angled' : s.roof === 'tile' ? 'mat:clay_roof_tiles_02' : s.roof === 'slate' ? 'mat:roof_slates_02' : 'mat:reed_roof_04';
+      // matched to the detailed shells as they read from a distance (mip-averaged textures wash out pale, so darker)
+      const wallK = s.style === 'stone' ? 'mat:medieval_blocks_02|tint:9a9184' : s.style === 'dark' ? 'mat:castle_wall_slates|tint:76767a' : s.style === 'rustic' ? 'mat:stacked_stone_wall|tint:8e8678' : s.style === 'plaster' ? 'mat:white_plaster_rough_01|tint:c2b8a4' : 'mat:plastered_wall_02|tint:b4a48a';
+      const roofK = s.roof === 'thatch' ? 'mat:thatch_roof_angled|tint:a08c68' : s.roof === 'tile' ? 'mat:clay_roof_tiles_02|tint:b07a62' : s.roof === 'slate' ? 'mat:roof_slates_02|tint:7c7e88' : 'mat:reed_roof_04|tint:9a8a6a';
       const before = new Map([...g.parts].map(([k, v]) => [k, v.pos.length / 3]));
       g.push().translate(b.x, b.y, b.z).rotateY(b.yaw);
       g.box(wallK, 0, H / 2 - 0.3, 0, s.w, H + 0.6, s.d, 0.45, 0b110111);
@@ -226,7 +235,9 @@ export class Settlements {
       fs.castShadow = true; fs.matrixAutoUpdate = false; fs.layers.set(LAYER_FAR_SHADOW);
       this.lod.add(fs);
     }
-    this.townLod.set(p.site.id, { meshes, flags, index });
+    const entry = { meshes, flags, index };
+    this.townLod.set(key, entry);
+    return entry;
   }
 
   private setLodHidden(b: Placed, hidden: boolean) {

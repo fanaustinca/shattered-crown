@@ -19,9 +19,11 @@ import type { Prop } from '../props/props';
 
 interface Sail { mesh: THREE.Mesh; u: Record<string, { value: number | THREE.Vector3 }>; top: number; bottom: number; area: number; set: number; target: number; pin: THREE.Vector3 }
 
-const SAIL_VERT = /* glsl */ `
+const SAIL_PARS = /* glsl */ `
   uniform float uFurl, uBillow, uFlutter, uTrim, uTime, uTop, uBottom, uZ0, uZ1;
   uniform vec3 uPivot;
+`;
+const SAIL_VERT = /* glsl */ `
   vec3 p0 = transformed;
   float sv = clamp((uTop - p0.y) / max(0.01, uTop - uBottom), 0.0, 1.0);
   float su = clamp((p0.z - uZ0) / max(0.01, uZ1 - uZ0), 0.0, 1.0);
@@ -175,7 +177,7 @@ export class Ship implements Interactable {
       m.onBeforeCompile = (sh, r) => {
         prev.call(m, sh, r);
         Object.assign(sh.uniforms, u);
-        sh.vertexShader = sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n' + SAIL_VERT);
+        sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\n' + SAIL_PARS).replace('#include <begin_vertex>', '#include <begin_vertex>\n' + SAIL_VERT);
       };
       m.customProgramCacheKey = () => 'sail';
       this.game.lighting.prep(m);

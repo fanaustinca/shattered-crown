@@ -1,0 +1,21 @@
+import { launch, openPage, serve } from './harness.mjs';
+const srv = await serve();
+const browser = await launch();
+const { page, errors } = await openPage(browser, `http://127.0.0.1:${srv.address().port}/?test&quality=low`, { width: 640, height: 360 });
+const r = await page.evaluate(() => {
+  const g = SC.game; g.manual = true;
+  const ship = g.ships.find((s) => s.kind === 'ship');
+  const hbx = new SC.THREE.Box3().setFromObject(ship.model, true), hb2 = new SC.THREE.Box3().setFromObject(ship.model, false);
+  const mm = []; ship.model.traverse((o) => { if (o.isMesh) { o.geometry.computeBoundingBox(); mm.push([o.name, o.geometry.boundingBox.min.toArray(), o.matrixWorld.elements.some((v) => !Number.isFinite(v)), o.position.toArray(), o.scale.toArray()]); } });
+  const rootM = [ship.root.position.toArray(), ship.model.position.toArray(), ship.model.scale.toArray(), ship.model.quaternion.toArray()];
+  const out = { mm, rootM, L: ship.length, B: ship.beam, deckY: ship.deckY, wl: ship.waterline, hb: [hbx.min.toArray(), hbx.max.toArray()], hb2: [hb2.min.toArray(), hb2.max.toArray()], start: ship.pos.toArray().map((v) => +v.toFixed(2)), sleeping: ship.body.isSleeping(), type: ship.body.bodyType(), mass: ship.mass, anchored: ship.anchored };
+  weather('storm');
+  for (let i = 0; i < 300; i++) g.step(1 / 60);
+  out.after = ship.pos.toArray().map((v) => +v.toFixed(2)); out.roll = ship.roll; out.pitch = ship.pitch; out.cam = g.camera.position.toArray();
+  out.sleeping2 = ship.body.isSleeping(); out.lin = ship.body.linvel();
+  out.amp = SC.game.weather.cur.wind;
+  return out;
+});
+console.log(JSON.stringify(r));
+console.log(errors.slice(0, 3).join('\n'));
+await browser.close(); srv.close();

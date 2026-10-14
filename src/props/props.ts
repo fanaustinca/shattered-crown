@@ -71,7 +71,8 @@ export class PropManager {
   constructor(public phys: Physics, public scene: THREE.Scene, public ground: (x: number, z: number) => number) {
     scene.add(this.group);
   }
-  async preloadAll() { await preload([...new Set(Object.values(ITEMS).map((d) => d.glb).filter(Boolean) as string[])]); }
+  /** Every model the world uses: item meshes plus the big set pieces (ships, cannons). */
+  async preloadAll() { await preload([...new Set([...Object.values(ITEMS).map((d) => d.glb).filter(Boolean) as string[], 'dutch_ship_medium', 'cannon_01'])]); }
 
   spawn(id: string, pos: THREE.Vector3, quat?: THREE.Quaternion, opts: { owner?: string | null; sleep?: boolean; vel?: THREE.Vector3 } = {}): Prop | null {
     const def = ITEMS[id];

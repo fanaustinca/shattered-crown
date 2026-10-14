@@ -250,7 +250,7 @@ void main() {
   // sun glint
   vec3 H = normalize(V + normalize(uSunDir));
   float spec = pow(max(dot(N, H), 0.0), 900.0) * 140.0 + pow(max(dot(N, H), 0.0), 120.0) * 3.0;
-  col += uSunColor * spec * sunUp * (1.0 - ssrHit * 0.5);
+  col += uSunColor * spec * sunUp * (1.0 - ssrHit * 0.5) * pow(1.0 - uOvercast, 3.0);   // no sun disc behind storm cloud
   // foam: wave crests, shorelines, and white water around rocks in the river
   vec4 nz = texture2D(tNoise, vWorld.xz / 9.0 + uTime * 0.01);
   vec4 nz2 = texture2D(tNoise, vWorld.xz / 3.1 - uTime * 0.02);

@@ -76,7 +76,8 @@ const VERT_MAIN = /* glsl */ `
   // density mask: no grass on roads, paving, cliffs, sand, riverbed, snow, under water
   float slope = 1.0 - tn.y;
   float east = cB.r;
-  float grassy = (1.0 - cA.r) * (1.0 - cA.g) * (1.0 - cB.g) * (1.0 - smoothstep(0.18, 0.3, slope));
+  // roads, tracks and paving: bare where worn, a ragged fringe of grass only at their edges
+  float grassy = (1.0 - smoothstep(0.12, 0.42, cA.r)) * (1.0 - smoothstep(0.08, 0.3, cA.g)) * (1.0 - cB.g) * (1.0 - smoothstep(0.18, 0.3, slope));
   grassy *= smoothstep(1.6, 3.6, h0) * (1.0 - smoothstep(300.0, 340.0, h0));
   grassy *= 1.0 - cA.a * 0.55;          // thinner on forest floors
   grassy *= mix(1.0, 0.7, east);

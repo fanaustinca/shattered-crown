@@ -55,6 +55,7 @@ class WantedPosters {
   update(law: Law) {
     this.group.clear();
     for (const plan of this.game.towns.plans) {
+      if (plan.minor) continue;
       const k = plan.site.kingdom;
       const b = law.bountyIn(k);
       if (b <= 0) continue;
@@ -294,6 +295,7 @@ export class Game {
   private spawnVehicles() {
     const r = mulberry32(4242);
     for (const plan of this.towns.plans) {
+      if (plan.minor) continue;
       const st = plan.buildings.filter((b) => b.spec.type === 'stable' || b.spec.type === 'barn').slice(0, 2);
       for (const b of st) {
         const p = this.settlements.towns && new THREE.Vector3(b.x + Math.sin(b.yaw) * (b.spec.d / 2 + 5) + Math.cos(b.yaw) * 3, 0, b.z + Math.cos(b.yaw) * (b.spec.d / 2 + 5) - Math.sin(b.yaw) * 3);
@@ -312,8 +314,9 @@ export class Game {
           // a merchant ship moored off the dock
           const off = new THREE.Vector3(Math.sin(d.yaw), 0, Math.cos(d.yaw));
           const side = new THREE.Vector3(off.z, 0, -off.x);
-          const sp = new THREE.Vector3(d.x, 0, d.z).addScaledVector(off, d.len / 2 - 6).addScaledVector(side, 9);
-          this.ships.push(new Ship(this, sp, Math.atan2(-off.z, off.x) + Math.PI / 2 * 0, 'ship', plan.site.kingdom === 'isles' ? 'The Gull' : 'The Wheat Maiden'));
+          const yaw = Math.atan2(-off.z, off.x);
+          const sp = this.deepWater(new THREE.Vector3(d.x, 0, d.z).addScaledVector(off, d.len / 2 - 6).addScaledVector(side, 9), off, yaw, 13, 4.5);
+          this.ships.push(new Ship(this, sp, yaw, 'ship', plan.site.kingdom === 'isles' ? 'The Gull' : 'The Wheat Maiden'));
         }
         const bp = new THREE.Vector3(d.x, 0, d.z).add(new THREE.Vector3(Math.cos(d.yaw) * 3.5, 0, -Math.sin(d.yaw) * 3.5));
         this.ships.push(new Ship(this, bp, d.yaw, 'boat', 'Rowing boat'));
@@ -324,6 +327,22 @@ export class Game {
       const z = b.z + 60, x = riverX(z) - riverWidth(z) * 0.3;
       this.ships.push(new Ship(this, new THREE.Vector3(x, 0, z), 0, 'boat', 'Skiff'));
     }
+  }
+
+  /** Move a mooring point out along `dir` until the whole hull (half-length along its yaw) floats in `depth` m of water. */
+  deepWater(p: THREE.Vector3, dir: THREE.Vector3, yaw: number, halfLen: number, depth: number) {
+    const ax = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw), sd = new THREE.Vector3(-ax.z, 0, ax.x);
+    const q = p.clone();
+    for (let k = 0; k < 120; k++) {
+      let ok = true;
+      for (const u of [-1, -0.5, 0, 0.5, 1]) for (const v of [-1, 1]) {
+        const x = q.x + ax.x * u * halfLen + sd.x * v * 3, z = q.z + ax.z * u * halfLen + sd.z * v * 3;
+        if (this.world.waterLevelAt(x, z) - this.world.heightAt(x, z) < depth) { ok = false; break; }
+      }
+      if (ok) return q;
+      q.addScaledVector(dir, 2);
+    }
+    return q;
   }
 
   resize() {
@@ -570,9 +589,11 @@ export class Game {
     fu.uWetLens.value = this.weather && !this.lighting.interior ? this.weather.cur.rain : 0;
     // one scene-graph update per frame (the opaque and water passes would each redo it), then skin once
     this.scene.updateMatrixWorld();
+    this.mark('r:graph');
     // cloth follows this frame's bones, then its own meshes get their world matrices
     this.cloth.update(Math.min(this.clothDt, 0.1), this.camera.position, this.time);
     this.clothDt = 0;
+    this.mark('r:cloth');
     flushBoneAtlas(this.renderer);
     this.pipeline.render();
     this.mark('r:submit');

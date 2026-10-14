@@ -146,7 +146,8 @@ export class Cloth {
         P[a] += dx * diff * wa; P[a + 1] += dy * diff * wa; P[a + 2] += dz * diff * wa;
         P[b] -= dx * diff * wb; P[b + 1] -= dy * diff * wb; P[b + 2] -= dz * diff * wb;
       }
-      // collisions: the wearer's limbs and the ground
+      // collisions: the wearer's limbs and the ground (resolving them in the last passes is enough)
+      if (it < iters - 2) continue;
       for (let i = 0; i < n; i++) {
         if (this.pin[i]) continue;
         const k = i * 3;
@@ -161,7 +162,10 @@ export class Cloth {
         if (it === iters - 1) { const gy = this.ground(P[k], P[k + 2]) + 0.015; if (P[k + 1] < gy) { P[k + 1] = gy; Q[k] = P[k] * 0.4 + Q[k] * 0.6; Q[k + 2] = P[k + 2] * 0.4 + Q[k + 2] * 0.6; } }
       }
     }
-    (this.posAttr.array as Float32Array).set(P);
+  }
+  /** Push the simulated positions to the GPU (once per frame). */
+  publish() {
+    (this.posAttr.array as Float32Array).set(this.pos);
     this.posAttr.needsUpdate = true;
     this.geo.computeVertexNormals();
   }
@@ -173,7 +177,7 @@ export class ClothSystem {
   cloths: Cloth[] = [];
   group = new THREE.Group();
   enabled = true;
-  budget = 3200;       // particles simulated per frame
+  budget = 2000;       // particles simulated per frame
   simRadius = 32;
   private acc = 0;
   constructor(scene: THREE.Scene, public ground: (x: number, z: number) => number) {
@@ -199,12 +203,11 @@ export class ClothSystem {
     }
     const w = sharedUniforms.uWind.value;
     const wind = _wind.set(w.x * 6, 0, w.y * 6);
-    // fixed 60 Hz substeps keep the cloth stable at any frame rate
-    this.acc = Math.min(this.acc + dt, 1 / 20);
-    while (this.acc >= 1 / 60) {
-      this.acc -= 1 / 60;
-      for (const c of this.cloths) if (c.simulated) c.step(1 / 60, wind, t, 4);
-    }
+    // one step per frame, clamped to the range Verlet cloth stays stable in
+    if (dt <= 0) return;
+    const h = Math.min(1 / 30, Math.max(1 / 90, dt));
+    void this.acc;
+    for (const c of this.cloths) if (c.simulated) { c.step(h, wind, t, 4); c.publish(); }
   }
 
   // ---------------- garments ----------------
@@ -212,7 +215,7 @@ export class ClothSystem {
   skirt(rig: Rig, color: number, girth = 1, hem = 0.1, owner: unknown) {
     const hips = rig.byName.hips, sk = rig.mesh.skeleton;
     const inv = sk.boneInverses[sk.bones.indexOf(hips)].clone();
-    const rows = 9, cols = 20, top = 0.99, r0 = 0.165 * girth + 0.012, r1 = 0.34;
+    const rows = 8, cols = 16, top = 0.99, r0 = 0.165 * girth + 0.012, r1 = 0.34;
     const c = new Cloth({ kind: 'bone', bone: hips, inv }, rows, cols, (r, cI, out) => {
       const t = r / (rows - 1), a = (cI / cols) * Math.PI * 2;
       const rad = r0 + (r1 - r0) * Math.pow(t, 0.8);

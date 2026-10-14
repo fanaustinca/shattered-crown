@@ -107,6 +107,9 @@ const atmosphereShader = (q: Quality) => ({
       float fbmW = n.g * 0.625 + n.b * 0.25 + n.a * 0.125;
       float base = remap(n.r, -(1.0 - fbmW), 1.0, 0.0, 1.0);
       base = clamp(remap(base * grad, 1.0 - cov, 1.0, 0.0, 1.0), 0.0, 1.0);
+      // overcast skies: a grey stratus deck closes the gaps, lumpy underneath, thinning where coverage dips
+      float strat = smoothstep(0.55, 0.95, uCloudCover) * smoothstep(0.35, 0.7, cov);
+      if (strat > 0.0) base = max(base, strat * smoothstep(0.0, 0.1, h) * smoothstep(0.55, 0.25, h) * (0.35 + 0.65 * fbmW));
       if (cheap || base <= 0.0) return base * cov;
       vec4 d = texture(tCloud, vec3(q.x + uTime * 6.0, p.y, q.y) / 1100.0);
       float df = d.g * 0.625 + d.b * 0.25 + d.a * 0.125;
@@ -135,6 +138,9 @@ const atmosphereShader = (q: Quality) => ({
       vec3 lightCol = sunDir.y > -0.05 ? uSunColor : vec3(0.02, 0.025, 0.035) * max(uMoonDir.y, 0.0);
       vec3 ambTop = skyRadiance(vec3(0.0, 1.0, 0.0), 0.0) * 1.6;
       vec3 ambBot = skyRadiance(normalize(vec3(rd.x, 0.05, rd.z)), 0.0) * 0.5;
+      // under a closed deck the light inside the cloud is grey, not sky-blue
+      ambTop = mix(ambTop, vec3(dot(ambTop, vec3(0.3, 0.4, 0.3))) * 1.15, uOvercast * 0.85);
+      ambBot = mix(ambBot, vec3(dot(ambBot, vec3(0.3, 0.4, 0.3))), uOvercast * 0.85);
       float T = 1.0; vec3 L = vec3(0.0);
       for (int i = 0; i < CLOUD_STEPS; i++) {
         vec3 p = ro + rd * t;

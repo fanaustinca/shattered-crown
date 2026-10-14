@@ -23,6 +23,7 @@ export class Music {
   private ctx: AudioContext | null = null;
   private out!: GainNode;
   private wet!: GainNode;
+  private bus!: GainNode;
   private silence = 25 + Math.random() * 35;   // first piece comes fairly soon
   private playingUntil = 0;
   private mood: Mood = 'day';
@@ -52,9 +53,8 @@ export class Music {
     bus.connect(dry).connect(this.out);
     bus.connect(conv).connect(this.wet).connect(this.out);
     this.out.connect(dest);
-    (this as unknown as { bus: GainNode }).bus = bus;
+    this.bus = bus;
   }
-  private get bus() { return (this as unknown as { bus: GainNode }).bus; }
 
   update(dt: number) {
     const c = this.ctx;

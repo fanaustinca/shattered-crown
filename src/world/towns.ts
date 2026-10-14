@@ -1,7 +1,7 @@
 // Settlement planning: streets, plazas, walls, building plots with types/styles, and the households
 // that live in them. Runs at boot after terrain/roads; levels the ground and paints paving.
 import * as THREE from 'three';
-import { SITES, type Site, riverX, riverWidth } from './layout';
+import { SITES, HALF, kingdomAt, type Site, riverX, riverWidth } from './layout';
 import type { World } from './world';
 import type { BType, BuildingSpec, Style } from '../build/building';
 import { mulberry32 } from '../core/noise';
@@ -16,7 +16,7 @@ export interface Placed {
   id: string; spec: BuildingSpec; x: number; z: number; yaw: number; y: number; site: string;
   household: Household | null; owner: string | null;
 }
-export interface WallPlan { site: string; pts: [number, number][]; r: number; gates: number[]; height: number; style: 'stone' | 'dark' | 'palisade' }
+export interface WallPlan { site: string; pts: [number, number][]; r: number; gates: number[]; height: number; style: 'stone' | 'dark' | 'palisade'; center?: [number, number] }
 export interface TownPlan {
   site: Site; buildings: Placed[]; walls: WallPlan | null; plaza: { x: number; z: number; r: number };
   wells: [number, number][]; stalls: { x: number; z: number; yaw: number; goods: string }[];
@@ -30,6 +30,8 @@ export interface TownPlan {
   /** radius around the site centre that contains every building (streaming) */
   siteR: number;
   anyLive?: boolean;
+  /** a lone farmstead (no walls, market or name on the map) */
+  minor?: boolean;
 }
 
 const FIRST_M = ['Aldric', 'Bran', 'Cedric', 'Dunstan', 'Edmund', 'Falk', 'Godric', 'Harold', 'Ivo', 'Jory', 'Kenric', 'Leofric', 'Merek', 'Nyle', 'Osric', 'Piers', 'Quill', 'Roderick', 'Simon', 'Tobias', 'Ulric', 'Wat', 'Wystan', 'Hugh', 'Gerald', 'Ansel', 'Brom', 'Corin', 'Daveth', 'Emeric'];
@@ -44,13 +46,43 @@ export class Towns {
 
   plan() {
     for (const s of SITES) this.plans.push(this.planSite(s));
+    this.planHomesteads();
     for (const p of this.plans) for (const b of p.buildings) this.byBuilding.set(b.id, b);
   }
 
-  private planSite(site: Site): TownPlan {
+  /** Lone farmsteads scattered over the open country of both kingdoms (and a few on the isles). */
+  private planHomesteads() {
+    const w = this.world, r = mulberry32(8080);
+    const spots: [number, number][] = [];
+    const want = { vanguardia: 64, ironreach: 46, isles: 8, river: 0 } as Record<string, number>;
+    const got: Record<string, number> = { vanguardia: 0, ironreach: 0, isles: 0, river: 0 };
+    for (let tries = 0; tries < 9000; tries++) {
+      const x = (r() - 0.5) * (HALF * 2 - 300), z = (r() - 0.5) * (HALF * 2 - 300);
+      const k = kingdomAt(x, z);
+      if (got[k] >= want[k]) continue;
+      const h = w.heightAt(x, z);
+      if (h < 4 || h > (k === 'ironreach' ? 230 : 120) || h < w.waterLevelAt(x, z) + 2) continue;
+      if (w.slopeAt(x, z) > (k === 'ironreach' ? 0.16 : 0.1)) continue;
+      if (w.fieldAt(x, z) > 0.05 || w.roadAt(x, z) > 0.05 || w.forestAt(x, z) > 0.45 || w.riverbedAt(x, z) > 0.01) continue;
+      if (this.plans.some((p) => Math.hypot(p.site.x - x, p.site.z - z) < p.siteR + 70)) continue;
+      if (spots.some(([sx, sz]) => Math.hypot(sx - x, sz - z) < 170)) continue;
+      // close enough to a road to have a track to it
+      let near = false;
+      for (const road of w.roads) { for (let i = 0; i < road.pts.length; i += 30) if (Math.hypot(road.pts[i] - x, road.pts[i + 1] - z) < 520) { near = true; break; } if (near) break; }
+      if (!near && r() < 0.8) continue;
+      spots.push([x, z]); got[k]++;
+      const fam = FAMILY[Math.floor(r() * FAMILY.length)];
+      const site: Site = { id: `farm${spots.length}`, name: `${fam} Farm`, kind: 'village', kingdom: k, x, z, r: 24 };
+      const plan = this.planSite(site, true);
+      if (plan.buildings.length) this.plans.push(plan);
+    }
+  }
+
+  private planSite(site: Site, minor = false): TownPlan {
     const w = this.world;
     const r = mulberry32(site.x * 13 + site.z * 7 + 99);
-    const plan: TownPlan = { site, buildings: [], walls: null, plaza: { x: site.x, z: site.z, r: site.kind === 'capital' ? 22 : 13 }, wells: [], stalls: [], keep: null, docks: [], streets: [], gardens: [], paddocks: [], orchards: [], haystacks: [], lamps: [], siteR: site.r };
+    const N = w.noise;
+    const plan: TownPlan = { site, buildings: [], walls: null, plaza: { x: site.x, z: site.z, r: site.kind === 'capital' ? 22 : minor ? 0 : 13 }, wells: [], stalls: [], keep: null, docks: [], streets: [], gardens: [], paddocks: [], orchards: [], haystacks: [], lamps: [], siteR: site.r, minor };
     const iron = site.kingdom === 'ironreach';
     const isles = site.kingdom === 'isles';
     const baseY = w.heightAt(site.x, site.z);
@@ -78,26 +110,33 @@ export class Towns {
       }
       return false;
     };
-    const okGround = (x: number, z: number, hw: number, hd: number) => {
+    // the wall line (if any) is an irregular polygon around the centre; buildings stay well inside it
+    let wallR: ((ang: number) => number) | null = null;
+    const okGround = (x: number, z: number, hw: number, hd: number, relaxed = false) => {
       for (const [u, v] of [[0, 0], [1, 1], [-1, 1], [1, -1], [-1, -1]]) {
         const px = x + u * hw, pz = z + v * hd;
         const h = w.heightAt(px, pz);
         if (h < 1.8 || h < w.waterLevelAt(px, pz) + 1.2) return false;
         if (Math.abs(px - riverX(pz)) < riverWidth(pz) * 0.5 + 8) return false;
-        if (Math.abs(h - baseY) > 14 && site.h !== undefined) return false;
+        if (!relaxed && Math.abs(h - baseY) > 14 && site.h !== undefined) return false;
+        if (w.roadAt(px, pz) > 0.5 && w.ctrl(w.ctrlA, 1, px, pz) < 0.3) return false;   // never on a country road
       }
-      return w.slopeAt(x, z) < 0.35;
+      if (wallR) {
+        // inside the walls stays inside; the roadside quarters stay clear of the wall and its ditch
+        const ang = Math.atan2(z - site.z, x - site.x), d = Math.hypot(x - site.x, z - site.z), e = Math.max(hw, hd);
+        if (relaxed ? d - e < wallR(ang) + 8 : d + e > wallR(ang) - 7) return false;
+      }
+      return w.slopeAt(x, z) < (relaxed ? 0.6 : 0.35);
     };
     let nId = 0;
-    const add = (type: BType, x: number, z: number, yaw: number, opts: Partial<BuildingSpec> = {}) => {
+    const add = (type: BType, x: number, z: number, yaw: number, opts: Partial<BuildingSpec> = {}, relaxed = false) => {
       const dims: Record<BType, [number, number, number, number]> = {
         cottage: [5.5, 7, 4.5, 5.5], house: [7, 10, 5.5, 7.5], townhouse: [6, 8, 6, 7.5], shop: [7, 9, 6, 7.5], tavern: [11, 14, 8, 10], smithy: [7, 9, 6, 7],
         stable: [12, 16, 7, 8], barn: [10, 14, 7, 9], chapel: [8, 10, 15, 20], barracks: [12, 16, 7, 8], warehouse: [10, 14, 8, 10], hall: [16, 20, 10, 12], guard: [6, 7, 6, 7],
       };
       const [w0, w1, d0, d1] = dims[type];
-      const bw = w0 + r() * (w1 - w0), bd = d0 + r() * (d1 - d0);
-      // buildings face the street with their long side when it is a wide frontage
-      if (overlaps(x, z, bw / 2, bd / 2, yaw) || !okGround(x, z, bw / 2, bd / 2)) return null;
+      const bw = opts.w ?? w0 + r() * (w1 - w0), bd = opts.d ?? d0 + r() * (d1 - d0);
+      if (overlaps(x, z, bw / 2, bd / 2, yaw) || !okGround(x, z, bw / 2, bd / 2, relaxed)) return null;
       const floors = type === 'cottage' || type === 'smithy' || type === 'stable' || type === 'barn' || type === 'chapel' || type === 'warehouse' || type === 'hall' ? 1 : type === 'townhouse' ? (r() < 0.4 ? 3 : 2) : type === 'guard' ? 2 : 2;
       const style: Style = iron ? (r() < 0.6 ? 'stone' : 'dark') : isles ? (r() < 0.5 ? 'rustic' : 'plaster') : type === 'chapel' || type === 'hall' || type === 'barracks' || type === 'guard' ? 'stone' : r() < 0.75 ? 'timber' : 'plaster';
       const roof = type === 'cottage' || type === 'barn' ? (iron ? 'slate' : 'thatch') : iron ? 'slate' : isles ? (r() < 0.5 ? 'thatch' : 'shingle') : r() < 0.8 ? 'tile' : 'thatch';
@@ -108,93 +147,170 @@ export class Towns {
       };
       const y = w.heightAt(x, z);
       placed.push({ x, z, hw: spec.w / 2, hd: spec.d / 2, yaw });
-      w.levelRect(x, z, spec.w + 1.2, spec.d + 1.2, yaw, y, 3);
+      w.levelRect(x, z, spec.w + 1.2, spec.d + 1.2, yaw, y, relaxed ? 4.5 : 3);
       w.paveRect(x, z, spec.w, spec.d, yaw);
       const p: Placed = { id: spec.id, spec, x, z, yaw, y, site: site.id, household: null, owner: null };
       plan.buildings.push(p);
-      // path to the door
-      const fx = x + Math.sin(yaw) * (spec.d / 2 + 2), fz = z + Math.cos(yaw) * (spec.d / 2 + 2);
-      w.paveLine(x + Math.sin(yaw) * spec.d / 2, z + Math.cos(yaw) * spec.d / 2, fx, fz, 1.8, iron ? 1 : 0.6);
+      // a worn path to the door: cobbles in the capital's core, beaten earth elsewhere
+      const fx = x + Math.sin(yaw) * (spec.d / 2 + 2.5), fz = z + Math.cos(yaw) * (spec.d / 2 + 2.5);
+      if (site.kind === 'capital' && !relaxed) w.paveLine(x + Math.sin(yaw) * spec.d / 2, z + Math.cos(yaw) * spec.d / 2, fx, fz, 1.8, iron ? 1 : 0.6);
+      else w.trail(x + Math.sin(yaw) * spec.d / 2, z + Math.cos(yaw) * spec.d / 2, fx, fz, 1.6, 0.7);
       return p;
     };
-    // plaza + well
-    w.pave(site.x, site.z, plan.plaza.r, 1);
-    plan.wells.push([site.x + 4, site.z + 3]);
-
-    const streetLine = (ang: number, from: number, to: number, width: number) => {
-      const x0 = site.x + Math.cos(ang) * from, z0 = site.z + Math.sin(ang) * from, x1 = site.x + Math.cos(ang) * to, z1 = site.z + Math.sin(ang) * to;
-      w.paveLine(x0, z0, x1, z1, width, site.kind === 'village' ? 0.5 : 1);
-      plan.streets.push([[x0, z0], [x1, z1]]);
+    // ---- organic streets ----
+    type Path = [number, number][];
+    /** a street from a to b that bends and wanders like one that grew over centuries */
+    const curved = (x0: number, z0: number, x1: number, z1: number, bend: number, step = 5): Path => {
+      const len = Math.hypot(x1 - x0, z1 - z0), n = Math.max(2, Math.ceil(len / step));
+      const nx = -(z1 - z0) / len, nz = (x1 - x0) / len;
+      const out: Path = [];
+      for (let i = 0; i <= n; i++) {
+        const t = i / n, s = Math.sin(Math.PI * t);
+        const x = x0 + (x1 - x0) * t, z = z0 + (z1 - z0) * t;
+        const off = bend * s + 6 * s * N.noise(x / 60 + site.x, z / 60);
+        out.push([x + nx * off, z + nz * off]);
+      }
+      return out;
     };
-    // lay buildings along a street on both sides, facing it
-    const lineBuildings = (ang: number, from: number, to: number, setback: number, pickType: (dist: number) => BType) => {
-      const ux = Math.cos(ang), uz = Math.sin(ang);
+    /** a lane wandering off in a direction until it runs out of room */
+    const wander = (x0: number, z0: number, heading: number, len: number): Path => {
+      const out: Path = [[x0, z0]];
+      let x = x0, z = z0, h = heading;
+      for (let d = 0; d < len; d += 4) {
+        h += N.noise(x / 40 + 31, z / 40) * 0.22;
+        x += Math.cos(h) * 4; z += Math.sin(h) * 4;
+        if (!w.inBounds(x, z) || w.heightAt(x, z) < w.waterLevelAt(x, z) + 1) break;
+        if (wallR && Math.hypot(x - site.x, z - site.z) > wallR(Math.atan2(z - site.z, x - site.x)) - 10) break;
+        out.push([x, z]);
+      }
+      return out;
+    };
+    const paveStreet = (p: Path, width: number, cobble: boolean, main = true) => {
+      for (let i = 0; i < p.length - 1; i++) {
+        if (cobble) w.paveLine(p[i][0], p[i][1], p[i + 1][0], p[i + 1][1], width, site.kind === 'village' ? 0.5 : 1);
+        else w.trail(p[i][0], p[i][1], p[i + 1][0], p[i + 1][1], width, 0.85);
+        if (main) plan.streets.push([p[i], p[i + 1]]);
+      }
+    };
+    /** houses along both sides of a street, facing it, with uneven setbacks, angles and gaps */
+    const along = (p: Path, setback: number, pickType: (t: number, side: number) => BType, from = 0, gapChance = 0.12) => {
+      const seg: number[] = [0];
+      for (let i = 1; i < p.length; i++) seg.push(seg[i - 1] + Math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1]));
+      const total = seg[seg.length - 1];
+      const at = (t: number) => {
+        let i = 1; while (i < seg.length - 1 && seg[i] < t) i++;
+        const a = p[i - 1], b = p[i], f = (t - seg[i - 1]) / Math.max(1e-6, seg[i] - seg[i - 1]);
+        const dx = b[0] - a[0], dz = b[1] - a[1], l = Math.hypot(dx, dz) || 1;
+        return { x: a[0] + dx * f, z: a[1] + dz * f, tx: dx / l, tz: dz / l };
+      };
       for (const side of [1, -1]) {
-        let t = from + r() * 3;
-        while (t < to) {
-          const type = pickType(t);
-          const off = setback + (type === 'chapel' || type === 'tavern' || type === 'hall' ? 4 : 2) + r() * 2;
-          const x = site.x + ux * t - uz * side * off, z = site.z + uz * t + ux * side * off;
-          // face the street: building local +z points toward the street centreline
-          const yaw = Math.atan2(uz * side, -ux * side);
-          const p = add(type, x, z, yaw);
-          t += p ? Math.max(p.spec.w, 5) + 0.6 + r() * (site.kind === 'capital' ? 0.8 : 2.5) : 2;
+        let t = from + r() * 4;
+        while (t < total - 3) {
+          if (r() < gapChance) { t += 4 + r() * 9; continue; }      // a yard, an alley, a garden wall
+          const type = pickType(t, side);
+          const q = at(t);
+          const nx = -q.tz * side, nz = q.tx * side;           // from the street toward this side
+          const off = setback + (type === 'chapel' || type === 'tavern' || type === 'hall' ? 4 : 2) + r() * 2.6;
+          const x = q.x + nx * off, z = q.z + nz * off;
+          const yaw = Math.atan2(-nx, -nz) + (r() - 0.5) * 0.22;
+          const b = add(type, x, z, yaw);
+          t += b ? Math.max(b.spec.w, 5) + 0.4 + r() * (site.kind === 'capital' ? 1.2 : 3.5) : 2.5;
         }
       }
     };
+    /** fill open ground with homes facing the nearest street (the town grows into its gaps) */
+    const infill = (count: number, rad: number, types: BType[]) => {
+      const pts = plan.streets.flatMap((s) => s);
+      for (let k = 0, tries = 0; k < count && tries < count * 8; tries++) {
+        const a = r() * Math.PI * 2, d = Math.sqrt(r()) * rad;
+        const x = site.x + Math.cos(a) * d, z = site.z + Math.sin(a) * d;
+        let best = pts[0], bd = 1e9;
+        for (const p of pts) { const dd = (p[0] - x) ** 2 + (p[1] - z) ** 2; if (dd < bd) { bd = dd; best = p; } }
+        if (!best || bd < 8 * 8 || bd > 60 * 60) continue;
+        const yaw = Math.atan2(best[0] - x, best[1] - z) + (r() - 0.5) * 0.5;
+        const b = add(types[Math.floor(r() * types.length)], x, z, yaw);
+        if (!b) continue;
+        k++;
+        w.trail(x + Math.sin(yaw) * b.spec.d / 2, z + Math.cos(yaw) * b.spec.d / 2, best[0], best[1], 1.6, 0.65);
+      }
+    };
+    // plaza + well
+    if (!minor) {
+      w.pave(site.x, site.z, plan.plaza.r, 1);
+      plan.wells.push([site.x + 4, site.z + 3]);
+    }
     const R = site.r;
     if (site.kind === 'capital') {
+      // the walls: an irregular ring that bulges and kinks with the ground, gates where the roads come in
       const gates: number[] = [];
-      const nRad = 6;
-      for (let i = 0; i < nRad; i++) {
-        const ang = (site.gateYaw ?? 0) + Math.PI / 2 * 0 + (i / nRad) * Math.PI * 2;
-        streetLine(ang, plan.plaza.r, R * 0.98, 7);
-        gates.push(ang);
+      for (let i = 0; i < 6; i++) gates.push((site.gateYaw ?? 0) + (i / 6) * Math.PI * 2 + (i ? (r() - 0.5) * 0.4 : 0));
+      const wp = organicRing(site, R * 0.97, 34, gates, w, r, 0.13);
+      wallR = (ang) => polyRadius(wp, site.x, site.z, ang);
+      plan.walls = { site: site.id, pts: wp, r: R * 0.97, gates, height: 11, style: iron ? 'dark' : 'stone', center: [site.x, site.z] };
+      // the keep and the cathedral first
+      const ka = (site.gateYaw ?? 0) + Math.PI + (r() - 0.5) * 0.5;
+      plan.keep = add('hall', site.x + Math.cos(ka) * R * 0.36, site.z + Math.sin(ka) * R * 0.36, -ka + Math.PI / 2 + (r() - 0.5) * 0.3, { floors: 3, w: 22, d: 16, style: iron ? 'dark' : 'stone', wealth: 1 } as Partial<BuildingSpec>);
+      add('chapel', site.x + Math.cos(axis + 1.3) * 36, site.z + Math.sin(axis + 1.3) * 36, Math.atan2(-Math.cos(axis + 1.3), -Math.sin(axis + 1.3)) + Math.PI / 2 + (r() - 0.5) * 0.3, { w: 12, d: 24 } as Partial<BuildingSpec>);
+      // main streets from the market square out to each gate, each bending its own way
+      const radials: Path[] = [];
+      for (const ga of gates) {
+        const gr = wallR(ga) - 2;
+        const p = curved(site.x + Math.cos(ga) * plan.plaza.r, site.z + Math.sin(ga) * plan.plaza.r, site.x + Math.cos(ga) * gr, site.z + Math.sin(ga) * gr, (r() - 0.5) * 34);
+        paveStreet(p, 6 + r() * 2, true);
+        radials.push(p);
       }
-      // ring street
-      const ringR = R * 0.55;
-      for (let i = 0; i < 48; i++) {
-        const a0 = (i / 48) * Math.PI * 2, a1 = ((i + 1) / 48) * Math.PI * 2;
-        w.paveLine(site.x + Math.cos(a0) * ringR, site.z + Math.sin(a0) * ringR, site.x + Math.cos(a1) * ringR, site.z + Math.sin(a1) * ringR, 5, 1);
+      // a crooked ring street about halfway out
+      const ringPath: Path = [];
+      const rr = 0.52 + r() * 0.08;
+      for (let i = 0; i <= 60; i++) { const a = (i / 60) * Math.PI * 2; const rad = wallR(a) * rr * (1 + 0.07 * N.noise(Math.cos(a) * 2 + site.x, Math.sin(a) * 2)); ringPath.push([site.x + Math.cos(a) * rad, site.z + Math.sin(a) * rad]); }
+      paveStreet(ringPath, 4.5, true);
+      const shopish = (t: number): BType => (t < R * 0.28 ? (r() < 0.45 ? 'shop' : r() < 0.15 ? 'tavern' : 'townhouse') : t > R * 0.75 && r() < 0.2 ? (r() < 0.5 ? 'barracks' : 'stable') : r() < 0.08 ? 'smithy' : r() < 0.6 ? 'townhouse' : 'house');
+      for (const p of radials) along(p, 4, shopish, 6, 0.08);
+      along(ringPath, 4, () => (r() < 0.55 ? 'townhouse' : r() < 0.6 ? 'house' : 'shop'), 0, 0.1);
+      // crooked lanes and alleys branching off the main streets (beaten earth and old cobbles)
+      for (let i = 0; i < 16; i++) {
+        const src = radials[Math.floor(r() * radials.length)];
+        const j = 3 + Math.floor(r() * Math.max(1, src.length - 6));
+        const [x0, z0] = src[Math.min(j, src.length - 1)], [x1, z1] = src[Math.min(j + 1, src.length - 1)];
+        const h = Math.atan2(z1 - z0, x1 - x0) + (r() < 0.5 ? 1 : -1) * (Math.PI / 2 + (r() - 0.5) * 0.9);
+        const lane = wander(x0, z0, h, 35 + r() * 70);
+        if (lane.length < 5) continue;
+        paveStreet(lane, 3 + r(), r() < 0.4, false);
+        plan.streets.push(...lane.slice(0, -1).map((p, k) => [p, lane[k + 1]] as [[number, number], [number, number]]));
+        along(lane, 2.5, () => (r() < 0.5 ? 'house' : r() < 0.6 ? 'cottage' : 'townhouse'), 4, 0.2);
       }
-      // cathedral-like chapel and the royal hall at the plaza
-      add('chapel', site.x + Math.cos(axis + 1.3) * 34, site.z + Math.sin(axis + 1.3) * 34, Math.atan2(-Math.cos(axis + 1.3), -Math.sin(axis + 1.3) ) + Math.PI / 2, { w: 12, d: 24 } as Partial<BuildingSpec>);
-      for (let i = 0; i < nRad; i++) {
-        const ang = (site.gateYaw ?? 0) + (i / nRad) * Math.PI * 2;
-        lineBuildings(ang, plan.plaza.r + 6, R * 0.9, 5, (t) => (t < R * 0.3 ? (r() < 0.45 ? 'shop' : r() < 0.15 ? 'tavern' : 'townhouse') : t > R * 0.8 && r() < 0.25 ? (r() < 0.5 ? 'barracks' : 'stable') : r() < 0.1 ? 'smithy' : r() < 0.6 ? 'townhouse' : 'house'));
-      }
-      // fill along the ring street
-      // a second row of houses behind each radial street
-      for (let i = 0; i < nRad; i++) {
-        const ang = (site.gateYaw ?? 0) + (i / nRad) * Math.PI * 2;
-        lineBuildings(ang, plan.plaza.r + 14, R * 0.86, 16, () => (r() < 0.65 ? 'townhouse' : r() < 0.5 ? 'house' : 'shop'));
-      }
-      for (let i = 0; i < 40; i++) {
-        const a = (i / 24) * Math.PI * 2 + 0.13;
-        for (const side of [1, -1]) {
-          const off = ringR + side * 9;
-          const x = site.x + Math.cos(a) * off, z = site.z + Math.sin(a) * off;
-          const yaw = Math.atan2(-Math.cos(a) * side, -Math.sin(a) * side);
-          add(r() < 0.6 ? 'townhouse' : 'house', x, z, yaw);
-          if (side > 0) plan.lamps.push([site.x + Math.cos(a) * ringR, site.z + Math.sin(a) * ringR]);
-        }
-      }
-      plan.walls = { site: site.id, pts: ringPts(site.x, site.z, R * 0.99, 40), r: R * 0.99, gates, height: 11, style: iron ? 'dark' : 'stone' };
-      // the keep inside the walls, opposite the main gate
-      const ka = (site.gateYaw ?? 0) + Math.PI;
-      plan.keep = add('hall', site.x + Math.cos(ka) * R * 0.33, site.z + Math.sin(ka) * R * 0.33, -ka + Math.PI / 2, { floors: 3, w: 22, d: 16, style: iron ? 'dark' : 'stone', wealth: 1 } as Partial<BuildingSpec>);
-      for (let i = 0; i < 10; i++) plan.stalls.push({ x: site.x + Math.cos(i * 0.63) * (plan.plaza.r - 4), z: site.z + Math.sin(i * 0.63) * (plan.plaza.r - 4), yaw: -i * 0.63 + Math.PI / 2, goods: ['fruit', 'bread', 'cloth', 'pottery', 'meat', 'cheese', 'weapons', 'fish', 'candles', 'tools'][i] });
+      infill(70, R * 0.88, ['house', 'townhouse', 'cottage', 'house']);
+      for (let i = 0; i < ringPath.length; i += 6) plan.lamps.push(ringPath[i]);
+      for (let i = 0; i < 10; i++) { const a = i * 0.63 + r() * 0.2, rd = plan.plaza.r - 4 - r() * 3; plan.stalls.push({ x: site.x + Math.cos(a) * rd, z: site.z + Math.sin(a) * rd, yaw: -a + Math.PI / 2 + (r() - 0.5) * 0.4, goods: ['fruit', 'bread', 'cloth', 'pottery', 'meat', 'cheese', 'weapons', 'fish', 'candles', 'tools'][i] }); }
+      // the town has spilled out past its walls along every road (and up the mountain to Ironspire)
+      this.faubourgs(plan, add, wallR, iron ? 720 : 380, iron ? 1 : 0.7, r);
     } else if (site.kind === 'castle') {
-      plan.walls = { site: site.id, pts: ringPts(site.x, site.z, R * 0.82, 10), r: R * 0.82, gates: [site.gateYaw ?? 0], height: 13, style: iron ? 'dark' : 'stone' };
-      plan.keep = add('hall', site.x, site.z, (site.gateYaw ?? 0) + Math.PI / 2, { floors: 3, w: 18, d: 14, style: iron ? 'dark' : 'stone', wealth: 1 } as Partial<BuildingSpec>);
-      const ring = (t: BType, ang: number) => { const a = (site.gateYaw ?? 0) + ang; return add(t, site.x + Math.cos(a) * R * 0.55, site.z + Math.sin(a) * R * 0.55, Math.atan2(-Math.cos(a), -Math.sin(a)) * 0 + (-a - Math.PI / 2)); };
+      const gates = [site.gateYaw ?? 0];
+      const wp = organicRing(site, R * 0.84, 9 + Math.floor(r() * 4), gates, w, r, 0.17);
+      wallR = (ang) => polyRadius(wp, site.x, site.z, ang);
+      plan.walls = { site: site.id, pts: wp, r: R * 0.84, gates, height: 13, style: iron ? 'dark' : 'stone', center: [site.x, site.z] };
+      // the keep sits off-centre on the highest ground, the rest crowd the curtain wall
+      const ka = (site.gateYaw ?? 0) + Math.PI + (r() - 0.5) * 1.2;
+      const kd = R * (0.1 + r() * 0.18);
+      plan.keep = add('hall', site.x + Math.cos(ka) * kd, site.z + Math.sin(ka) * kd, (site.gateYaw ?? 0) + Math.PI / 2 + (r() - 0.5) * 0.5, { floors: 3, w: 18, d: 14, style: iron ? 'dark' : 'stone', wealth: 1 } as Partial<BuildingSpec>);
+      const ring = (t: BType, ang: number) => {
+        const a = (site.gateYaw ?? 0) + ang + (r() - 0.5) * 0.3;
+        for (let k = 0; k < 4; k++) {
+          const d = wallR!(a) - 11 - r() * 6 - k * 3;
+          const b = add(t, site.x + Math.cos(a) * d, site.z + Math.sin(a) * d, -a - Math.PI / 2 + (r() - 0.5) * 0.2);
+          if (b) return b;
+        }
+        return null;
+      };
       ring('barracks', 1.2); ring('stable', -1.2); ring('smithy', 2.2); ring('chapel', -2.3); ring('guard', 0.6); ring('house', -0.7); ring('warehouse', 2.9);
-      streetLine(site.gateYaw ?? 0, 0, R * 0.9, 6);
-    } else {
-      // towns, villages, ports: a main street on the road axis, a cross street, outskirts of cottages and barns
+      paveStreet(curved(site.x, site.z, site.x + Math.cos(site.gateYaw ?? 0) * (wallR(site.gateYaw ?? 0) - 2), site.z + Math.sin(site.gateYaw ?? 0) * (wallR(site.gateYaw ?? 0) - 2), (r() - 0.5) * 12), 6, true);
+    } else if (!minor) {
+      // towns, villages, ports: a crooked high street along the road, a cross street, lanes, and homes in between
       const L = R * 0.95;
-      streetLine(axis, 0, L, 6); streetLine(axis + Math.PI, 0, L, 6);
-      streetLine(axis + Math.PI / 2, 0, L * 0.6, 5); streetLine(axis - Math.PI / 2, 0, L * 0.6, 5);
+      const ends = [axis, axis + Math.PI].map((a) => curved(site.x, site.z, site.x + Math.cos(a) * L, site.z + Math.sin(a) * L, (r() - 0.5) * 30));
+      const cross = [axis + Math.PI / 2, axis - Math.PI / 2].map((a) => curved(site.x, site.z, site.x + Math.cos(a) * L * (0.45 + r() * 0.25), site.z + Math.sin(a) * L * (0.45 + r() * 0.25), (r() - 0.5) * 22));
+      for (const p of ends) paveStreet(p, 6, true);
+      for (const p of cross) paveStreet(p, 4.5, r() < 0.6);
       let tavern = false, smithy = false, chapel = false, stable = false;
       const pick = (t: number): BType => {
         if (!tavern && t < 30) { tavern = true; return 'tavern'; }
@@ -205,24 +321,106 @@ export class Towns {
         if (t > L * 0.7) return r() < 0.3 ? 'barn' : 'cottage';
         return r() < 0.25 ? 'shop' : r() < 0.5 ? 'house' : 'cottage';
       };
-      for (const a of [axis, axis + Math.PI]) lineBuildings(a, plan.plaza.r + 4, L, 4, pick);
-      for (const a of [axis + Math.PI / 2, axis - Math.PI / 2]) lineBuildings(a, plan.plaza.r + 4, L * 0.6, 3.5, pick);
+      for (const p of ends) along(p, 4, pick, plan.plaza.r + 2, 0.18);
+      for (const p of cross) along(p, 3.5, pick, plan.plaza.r + 2, 0.25);
+      for (let i = 0; i < 3 + Math.floor(r() * 3); i++) {
+        const src = [...ends, ...cross][Math.floor(r() * 4)];
+        const j = 2 + Math.floor(r() * Math.max(1, src.length - 4));
+        const [x0, z0] = src[Math.min(j, src.length - 1)], [x1, z1] = src[Math.min(j + 1, src.length - 1)];
+        const lane = wander(x0, z0, Math.atan2(z1 - z0, x1 - x0) + (r() < 0.5 ? 1 : -1) * (1.2 + r() * 0.8), 30 + r() * 50);
+        if (lane.length < 4) continue;
+        paveStreet(lane, 3, false, false);
+        plan.streets.push(...lane.slice(0, -1).map((p, k) => [p, lane[k + 1]] as [[number, number], [number, number]]));
+        along(lane, 2.5, () => (r() < 0.6 ? 'cottage' : 'house'), 3, 0.3);
+      }
+      infill(10 + Math.floor(r() * 10), R * 0.9, ['cottage', 'house', 'cottage']);
       if (site.dock) {
         plan.docks.push({ x: site.dock.x, z: site.dock.z, yaw: site.dock.yaw, len: 40 });
-        w.paveLine(site.x, site.z, site.dock.x, site.dock.z, 5, 0.8);
+        paveStreet(curved(site.x, site.z, site.dock.x, site.dock.z, (r() - 0.5) * 20), 5, true);
       }
       // a ferry landing on the river for Eastford/Greyford
       if (site.id === 'eastford' || site.id === 'greyford') {
         const z = site.z, rx = riverX(z), wv = riverWidth(z) / 2, sd = site.id === 'eastford' ? -1 : 1;
         plan.docks.push({ x: rx + sd * (wv + 2), z, yaw: sd > 0 ? -Math.PI / 2 : Math.PI / 2, len: 14 });
-        w.paveLine(site.x, site.z, rx + sd * (wv + 6), z, 4, 0.7);
+        w.trail(site.x, site.z, rx + sd * (wv + 6), z, 4, 0.9);
       }
-      for (let i = 0; i < 4; i++) plan.stalls.push({ x: site.x + Math.cos(axis + i * 1.57 + 0.78) * (plan.plaza.r - 3), z: site.z + Math.sin(axis + i * 1.57 + 0.78) * (plan.plaza.r - 3), yaw: -(axis + i * 1.57 + 0.78) - Math.PI / 2, goods: ['fruit', 'bread', 'cloth', 'meat'][i] });
+      for (let i = 0; i < 4; i++) { const a = axis + i * 1.57 + 0.78 + (r() - 0.5) * 0.4; plan.stalls.push({ x: site.x + Math.cos(a) * (plan.plaza.r - 3), z: site.z + Math.sin(a) * (plan.plaza.r - 3), yaw: -a - Math.PI / 2, goods: ['fruit', 'bread', 'cloth', 'meat'][i] }); }
     }
-    this.enrich(plan, r, add, overlaps, okGround, placed);
+    if (minor) this.homestead(plan, add, r);
+    else this.enrich(plan, r, add, overlaps, okGround, placed);
     this.populate(plan, r);
     for (const b of plan.buildings) plan.siteR = Math.max(plan.siteR, Math.hypot(b.x - site.x, b.z - site.z) + 12);
     return plan;
+  }
+
+  /** Houses lining the roads beyond the walls: inns, smithies and cottages on terraces cut into the slope. */
+  private faubourgs(plan: TownPlan, add: (t: BType, x: number, z: number, yaw: number, o?: Partial<BuildingSpec>, relaxed?: boolean) => Placed | null, wallR: (a: number) => number, reach: number, density: number, r: () => number) {
+    const site = plan.site, w = this.world;
+    for (const road of w.roads) {
+      if (road.kind !== 'road') continue;
+      const P = road.pts, n = P.length / 3;
+      // does this road start or end at the town?
+      const d0 = Math.hypot(P[0] - site.x, P[1] - site.z), d1 = Math.hypot(P[(n - 1) * 3] - site.x, P[(n - 1) * 3 + 1] - site.z);
+      if (Math.min(d0, d1) > site.r * 0.6) continue;
+      const dir = d0 < d1 ? 1 : -1;
+      let lastT = -1e9;
+      let inn = false;
+      for (let k = dir > 0 ? 0 : n - 1; k >= 0 && k < n; k += dir) {
+        const x = P[k * 3], z = P[k * 3 + 1];
+        const dc = Math.hypot(x - site.x, z - site.z);
+        if (dc < wallR(Math.atan2(z - site.z, x - site.x)) + 14) continue;
+        if (dc > wallR(0) + reach) break;
+        // arc length since the last plot (points are ~2 m apart)
+        const t = k * 2 * dir;
+        if (Math.abs(t - lastT) < 9 + r() * 9) continue;
+        lastT = t;
+        const k2 = Math.min(n - 1, Math.max(0, k + dir * 2));
+        const tx = P[k2 * 3] - x, tz = P[k2 * 3 + 1] - z, tl = Math.hypot(tx, tz) || 1;
+        const fade = 1 - (dc - wallR(0)) / (reach + 1);                 // denser near the gates
+        for (const side of [1, -1]) {
+          if (r() > density * (0.45 + 0.55 * fade)) continue;
+          const nx = -tz / tl * side, nz = tx / tl * side;
+          const type: BType = !inn && r() < 0.06 ? 'tavern' : r() < 0.05 ? 'smithy' : r() < 0.04 ? 'stable' : fade > 0.6 && r() < 0.4 ? 'townhouse' : r() < 0.55 ? 'house' : 'cottage';
+          const off = 8.5 + r() * 3 + (type === 'tavern' ? 3 : 0);   // clear of the carriageway and its verge
+          const bx = x + nx * off, bz = z + nz * off;
+          const b = add(type, bx, bz, Math.atan2(-nx, -nz) + (r() - 0.5) * 0.18, {}, true);
+          if (b && type === 'tavern') inn = true;
+          if (b && r() < 0.4) plan.lamps.push([x + nx * 3.6, z + nz * 3.6]);
+        }
+      }
+    }
+  }
+
+  /** A lone farmstead out on the land: a cottage, maybe a barn, a garden, a paddock, a path to the road. */
+  private homestead(plan: TownPlan, add: (t: BType, x: number, z: number, yaw: number, o?: Partial<BuildingSpec>, relaxed?: boolean) => Placed | null, r: () => number) {
+    const s = plan.site, w = this.world;
+    // face the nearest road (or the nearest town)
+    let tx = 0, tz = 0, bd = 1e9;
+    for (const road of w.roads) for (let i = 0; i < road.pts.length; i += 15) { const d = (road.pts[i] - s.x) ** 2 + (road.pts[i + 1] - s.z) ** 2; if (d < bd) { bd = d; tx = road.pts[i]; tz = road.pts[i + 1]; } }
+    const yaw = Math.atan2(tx - s.x, tz - s.z) + (r() - 0.5) * 0.6;
+    const iron = s.kingdom === 'ironreach';
+    const house = add(r() < 0.75 ? 'cottage' : 'house', s.x, s.z, yaw, { style: iron ? (r() < 0.5 ? 'stone' : 'dark') : r() < 0.5 ? 'timber' : r() < 0.5 ? 'plaster' : 'rustic', roof: iron ? 'slate' : r() < 0.7 ? 'thatch' : 'shingle', wealth: r() * 0.4 } as Partial<BuildingSpec>, true);
+    if (!house) return;
+    const side = [Math.cos(yaw), -Math.sin(yaw)], back = [-Math.sin(yaw), -Math.cos(yaw)];
+    const sd = r() < 0.5 ? 1 : -1;
+    if (r() < 0.6) add(r() < 0.7 ? 'barn' : 'stable', s.x + side[0] * sd * 13 + back[0] * 3, s.z + side[1] * sd * 13 + back[1] * 3, yaw + Math.PI / 2 * sd + (r() - 0.5) * 0.3, { style: 'rustic' } as Partial<BuildingSpec>, true);
+    // garden behind, paddock to the side, a haystack or two, sometimes a well
+    const gd = 6 + r() * 5, gw = 6 + r() * 5;
+    const gx = s.x + back[0] * (house.spec.d / 2 + gd / 2 + 1.5), gz = s.z + back[1] * (house.spec.d / 2 + gd / 2 + 1.5);
+    if (w.slopeAt(gx, gz) < 0.2) { w.paintPlot(gx, gz, gw, gd, yaw, r() < 0.6 ? 3 : 1, 1); plan.gardens.push({ x: gx, z: gz, w: gw, d: gd, yaw }); }
+    if (r() < 0.55) {
+      const pw = 14 + r() * 10, pd = 10 + r() * 8;
+      const px = s.x - side[0] * sd * (pw / 2 + 9), pz = s.z - side[1] * sd * (pw / 2 + 9);
+      if (w.slopeAt(px, pz) < 0.22 && w.heightAt(px, pz) > w.waterLevelAt(px, pz) + 1) {
+        w.paintPlot(px, pz, pw, pd, yaw, 0, 0.35);
+        const sp = (iron ? ['pig', 'donkey', 'horse'] : ['cow', 'pig', 'horse', 'donkey', 'cow'])[Math.floor(r() * (iron ? 3 : 5))] as TownPlan['paddocks'][number]['species'];
+        plan.paddocks.push({ x: px, z: pz, w: pw, d: pd, yaw, species: sp });
+      }
+    }
+    for (let h = 0; h < Math.floor(r() * 3); h++) plan.haystacks.push([s.x + back[0] * (14 + h * 3) + side[0] * sd * 8, s.z + back[1] * (14 + h * 3) + side[1] * sd * 8]);
+    if (r() < 0.35) plan.wells.push([s.x + side[0] * -sd * 6 + Math.sin(yaw) * 6, s.z + side[1] * -sd * 6 + Math.cos(yaw) * 6]);
+    // the track to the road
+    if (bd < 700 * 700) w.trail(s.x + Math.sin(yaw) * (house.spec.d / 2), s.z + Math.cos(yaw) * (house.spec.d / 2), tx, tz, 2.2, 0.75);
   }
 
   /** Life around the houses: kitchen gardens, farmsteads with paddocks and haystacks, orchards, lamps. */
@@ -275,16 +473,15 @@ export class Towns {
         const ox = fx - side.x * (ow / 2 + 8), oz = fz - side.z * (ow / 2 + 8);
         if (!overlaps(ox, oz, ow / 2, od / 2, yaw) && okGround(ox, oz, ow / 2, od / 2)) { rect(ox, oz, ow, od, yaw, 0, 0); plan.orchards.push({ x: ox, z: oz, w: ow, d: od, yaw }); }
       }
-      const fy = w.heightAt(fx, fz);
-      w.paveLine(fx, fz, site.x, site.z, 2.5, 0.45);
-      void fy;
+      // a cart track back to town
+      w.trail(fx + Math.sin(yaw) * 4, fz + Math.cos(yaw) * 4, site.x + (fx - site.x) * 0.35, site.z + (fz - site.z) * 0.35, 2.6, 0.8);
     }
-    // torches along the main streets
-    for (const st of plan.streets) {
-      const [[x0, z0], [x1, z1]] = st;
-      const len = Math.hypot(x1 - x0, z1 - z0);
-      for (let t = 18; t < len; t += 26) plan.lamps.push([x0 + (x1 - x0) * t / len + (z1 - z0) / len * 4, z0 + (z1 - z0) * t / len - (x1 - x0) / len * 4]);
-    }
+    // torches along the streets, now and then
+    plan.streets.forEach(([[x0, z0], [x1, z1]], i) => {
+      if (i % 5 !== 2) return;
+      const len = Math.hypot(x1 - x0, z1 - z0) || 1, sd = i % 10 < 5 ? 1 : -1;
+      plan.lamps.push([x0 + (z1 - z0) / len * 3.6 * sd, z0 - (x1 - x0) / len * 3.6 * sd]);
+    });
   }
 
   /** Households for every dwelling; workers for workplaces. */
@@ -334,9 +531,49 @@ export class Towns {
   }
 }
 
-function ringPts(cx: number, cz: number, r: number, n: number): [number, number][] {
-  const out: [number, number][] = [];
-  for (let i = 0; i < n; i++) { const a = (i / n) * Math.PI * 2; out.push([cx + Math.cos(a) * r, cz + Math.sin(a) * r]); }
-  return out;
+/**
+ * An irregular wall circuit: vertices at uneven angles and radii (bulging with noise and pulled in where the
+ * ground falls away), kept regular only around the gates so the gatehouses sit square on the roads.
+ */
+function organicRing(site: Site, R: number, n: number, gates: number[], w: World, r: () => number, irregular: number): [number, number][] {
+  const base = w.heightAt(site.x, site.z);
+  const angs: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    const nearGate = gates.some((g) => Math.abs(Math.atan2(Math.sin(g - a), Math.cos(g - a))) < (Math.PI * 2 / n) * 1.6);
+    angs.push(a + (nearGate ? 0 : (r() - 0.5) * (Math.PI * 2 / n) * 0.55));
+  }
+  // make sure each gate falls on the middle of a segment
+  for (const g of gates) {
+    const step = Math.PI * 2 / n;
+    let best = 0, bd = 9;
+    angs.forEach((a, i) => { const d = Math.abs(Math.atan2(Math.sin(g - step / 2 - a), Math.cos(g - step / 2 - a))); if (d < bd) { bd = d; best = i; } });
+    angs[best] = g - step / 2; angs[(best + 1) % n] = g + step / 2;
+  }
+  angs.sort((a, b) => ((a % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2) - ((b % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2));
+  const rad = angs.map((a) => {
+    let rr = R * (1 - irregular * 0.5 + irregular * (0.5 + 0.5 * w.noise.noise(Math.cos(a) * 1.3 + site.x * 0.01, Math.sin(a) * 1.3 + site.z * 0.01)));
+    // follow the brow of the hill: pull the wall in where the ground drops away
+    for (let d = R * 0.55; d < rr; d += 3) { if (w.heightAt(site.x + Math.cos(a) * d, site.z + Math.sin(a) * d) < base - 5) { rr = Math.max(R * 0.6, d - 4); break; } }
+    return rr;
+  });
+  // soften: neighbours pull toward each other a little
+  const sm = rad.map((v, i) => v * 0.6 + (rad[(i + n - 1) % n] + rad[(i + 1) % n]) * 0.2);
+  return angs.map((a, i) => [site.x + Math.cos(a) * sm[i], site.z + Math.sin(a) * sm[i]] as [number, number]);
+}
+/** Distance from the centre to a star-shaped polygon along a ray. */
+function polyRadius(pts: [number, number][], cx: number, cz: number, ang: number): number {
+  const dx = Math.cos(ang), dz = Math.sin(ang);
+  let best = Infinity;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    const ex = b[0] - a[0], ez = b[1] - a[1];
+    const den = dx * ez - dz * ex;
+    if (Math.abs(den) < 1e-9) continue;
+    const t = ((a[0] - cx) * ez - (a[1] - cz) * ex) / den;
+    const u = ((a[0] - cx) * dz - (a[1] - cz) * dx) / den;
+    if (t > 0 && u >= 0 && u <= 1) best = Math.min(best, t);
+  }
+  return Number.isFinite(best) ? best : 100;
 }
 export const _v = new THREE.Vector3();

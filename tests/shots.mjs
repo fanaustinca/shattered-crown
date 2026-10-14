@@ -12,7 +12,7 @@ const b = await launch();
 const { page, errors, logs } = await openPage(b, `${url}?test&quality=${q}`, { width: W, height: H });
 await page.evaluate(() => { SC.game.manual = true; document.getElementById('loading')?.remove(); });
 for (const v of VIEWS) {
-  if (filter && !v.name.includes(filter)) continue;
+  if (filter && !filter.split('|').some((f) => v.name.includes(f))) continue;
   const t0 = Date.now();
   const info = await page.evaluate(async (v) => {
     if (v.setup) await (0, eval)('(' + v.setup + ')')(SC);

@@ -207,7 +207,7 @@ export class UI {
         const pp = this.game.player.pos;
         const toMap = (x: number, z: number) => [((x + HALF) / (HALF * 2)) * 100, ((z + HALF) / (HALF * 2)) * 100];
         const [px, pz] = toMap(pp.x, pp.z);
-        const labels = this.game.towns.plans.map((pl) => { const [x, z] = toMap(pl.site.x, pl.site.z); return `<div class="lbl ${pl.site.kind}" style="left:${x}%;top:${z}%">${pl.site.name}</div>`; }).join('');
+        const labels = this.game.towns.plans.filter((pl) => !pl.minor).map((pl) => { const [x, z] = toMap(pl.site.x, pl.site.z); return `<div class="lbl ${pl.site.kind}" style="left:${x}%;top:${z}%">${pl.site.name}</div>`; }).join('');
         sec.innerHTML = `<h2>The Realm</h2><div class="map"><img src="${img}"/>${labels}<div class="me" style="left:${px}%;top:${pz}%;transform:translate(-50%,-50%) rotate(${-this.game.player.yaw}rad)">▲</div><div class="kl v">VANGUARDIA</div><div class="kl i">IRONREACH</div></div>`;
       } else if (t === 'journal') {
         const law = this.game.law;

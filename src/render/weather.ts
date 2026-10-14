@@ -56,14 +56,14 @@ export class Weather {
         p.y += c.y;
         vA = step(aSeed.x * 0.999, uAmount) * (1.0 - smoothstep(box * 0.35, box * 0.5, length(p.xz - c.xz)));
         vec3 right = normalize(cross(vec3(0.0, 1.0, 0.0), normalize(cameraPosition - p) + 1e-4));
-        float len = ${snow ? '0.03' : '0.7'};
-        vec3 wp = p + right * position.x * ${snow ? '6.0' : '1.0'} + vec3(uWind.x * 0.06, -1.0, uWind.y * 0.06) * position.y * len ${snow ? '+ vec3(0.0, position.y * 0.03, 0.0)' : ''};
+        float len = ${snow ? '0.03' : '0.95'};
+        vec3 wp = p + right * position.x * ${snow ? '6.0' : '1.6'} + vec3(uWind.x * 0.06, -1.0, uWind.y * 0.06) * position.y * len ${snow ? '+ vec3(0.0, position.y * 0.03, 0.0)' : ''};
         vUv = position.xy;
         gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.0);
       }`;
     const frag = (snow: boolean) => /* glsl */ `
       varying float vA; varying vec2 vUv; uniform vec3 uLight;
-      void main() { if (vA < 0.5) discard; gl_FragColor = vec4(uLight * ${snow ? '1.6' : '0.9'}, ${snow ? '0.9' : '0.22'}); }`;
+      void main() { if (vA < 0.5) discard; float edge = 1.0 - abs(vUv.x) * 120.0; gl_FragColor = vec4(uLight * ${snow ? '1.6' : '1.3'}, ${snow ? '0.9' : '0.34'} * ${snow ? '1.0' : 'clamp(edge, 0.4, 1.0)'}); }`;
     const mk = (snow: boolean) => {
       const m = new THREE.ShaderMaterial({ uniforms: { ...u, uAmount: { value: 0 } }, vertexShader: vert(snow), fragmentShader: frag(snow), transparent: true, depthWrite: false });
       const mesh = new THREE.Mesh(g, m);

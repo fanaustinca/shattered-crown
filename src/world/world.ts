@@ -81,6 +81,23 @@ export class World {
     const len = Math.hypot(x1 - x0, z1 - z0), n = Math.max(1, Math.ceil(len / 1.5));
     for (let k = 0; k <= n; k++) this.pave(x0 + (x1 - x0) * k / n, z0 + (z1 - z0) * k / n, w / 2, amount);
   }
+  /** A beaten-earth path or track between two points: wanders a little, worn darker in the middle. */
+  trail(x0: number, z0: number, x1: number, z1: number, w: number, amount = 0.75) {
+    const len = Math.hypot(x1 - x0, z1 - z0);
+    if (len < 0.5) return;
+    const n = Math.max(1, Math.ceil(len / 1.4)), nx = -(z1 - z0) / len, nz = (x1 - x0) / len;
+    for (let k = 0; k <= n; k++) {
+      const t = k / n;
+      const wob = Math.sin(Math.PI * t) * Math.min(len * 0.08, 4) * this.noise.noise(x0 / 30 + t * len / 40, z0 / 30);
+      const x = x0 + (x1 - x0) * t + nx * wob, z = z0 + (z1 - z0) * t + nz * wob;
+      const hw = w / 2 * (0.85 + 0.3 * this.noise.noise(x / 7, z / 7));
+      this.paint(x, z, hw + 1, (q, d) => {
+        const v = (1 - smoothstep(hw * 0.4, hw + 1, d)) * amount;
+        if (v * 255 > this.ctrlA[q * 4]) this.ctrlA[q * 4] = Math.round(v * 255);
+        this.forest[q] = 0;
+      });
+    }
+  }
   /** Level the ground under a rectangular footprint to height y (with a soft skirt). */
   levelRect(x: number, z: number, w: number, d: number, yaw: number, y: number, skirt = 4) {
     const c = Math.cos(yaw), sn = Math.sin(yaw), R = Math.hypot(w, d) / 2 + skirt;

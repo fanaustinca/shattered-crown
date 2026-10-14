@@ -80,7 +80,8 @@ export class Lighting {
     const sunUp = THREE.MathUtils.smoothstep(sy, -0.04, 0.06);
     this.dayFactor = THREE.MathUtils.smoothstep(sy, -0.2, 0.25);
     sunTransmittance(sy, skyUniforms.uTurbidity.value, this.tmp);
-    const shade = 1 - overcast * 0.85;
+    // thick cloud scatters the sun into the sky: the direct beam (and its hard shadows) all but vanish
+    const shade = 1 - Math.pow(overcast, 0.75) * 0.93;
     if (sunUp > 0.001) {
       this.sunColor.copy(this.tmp).multiplyScalar(4.2 * sunUp * shade);
       this.csm.lightDirection.copy(this.sunDir).negate();
@@ -91,7 +92,8 @@ export class Lighting {
     }
     for (const l of this.csm.lights) { l.color.copy(this.sunColor); l.intensity = 1; }
     // radiance used to light clouds and water glints
-    sharedUniforms.uSunColor.value.copy(this.tmp).multiplyScalar(2.2 * sunUp + 0.0);
+    // under heavy cloud there is no sun disc: no glints on the water, no sunlit cloud rims
+    sharedUniforms.uSunColor.value.copy(this.tmp).multiplyScalar(2.2 * sunUp * (1 - overcast * 0.9));
     if (sunUp <= 0.001) sharedUniforms.uSunColor.value.setRGB(0.02, 0.025, 0.04);
     // IBL brightness and auto exposure (the eye adapts to night)
     this.scene.environmentIntensity = 0.55 + 0.45 * this.dayFactor;
