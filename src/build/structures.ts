@@ -307,3 +307,109 @@ export function lampPost(out: StructModel, x: number, z: number, ground: (x: num
   out.torches.push(new THREE.Vector3(x + 0.45, y + 2.95, z));
   out.colliders.push({ c: new THREE.Vector3(x, y + 1.4, z), h: new THREE.Vector3(0.1, 1.6, 0.1) });
 }
+
+// ---------------- stable yards and harbours ----------------
+const TIMBER = 'wood:dark|stain:walnut|fin:raw', PLANK = 'wood:weathered|stain:natural|fin:raw';
+const yq = (yaw: number) => new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+
+/** A hollowed-log water trough on two trestles. */
+export function trough(out: StructModel, x: number, z: number, yaw: number, ground: (x: number, z: number) => number) {
+  const y = ground(x, z), g = out.geo;
+  g.push().translate(x, y, z).rotateY(yaw);
+  g.box(PLANK, 0, 0.55, 0, 0.75, 0.08, 2.6, 1.5);
+  for (const s of [-1, 1]) { g.box(PLANK, s * 0.36, 0.72, 0, 0.06, 0.4, 2.6, 1.5); g.box(PLANK, 0, 0.72, s * 1.27, 0.75, 0.4, 0.06, 1.5); }
+  g.box('color:1a2a30|r:0.05', 0, 0.84, 0, 0.64, 0.01, 2.48);    // water
+  for (const s of [-1, 1]) for (const t of [-1, 1]) g.box(TIMBER, t * 0.3, 0.26, s * 1.0, 0.1, 0.55, 0.1, 2);
+  g.pop();
+  out.colliders.push({ c: new THREE.Vector3(x, y + 0.5, z), h: new THREE.Vector3(0.4, 0.5, 1.3), q: yq(yaw) });
+}
+
+/** A medieval treadwheel crane on the quay: timber tower, great wheel, long jib with a rope and hook. */
+export function crane(out: StructModel, x: number, z: number, yaw: number, ground: (x: number, z: number) => number) {
+  const y = ground(x, z), g = out.geo;
+  g.push().translate(x, y, z).rotateY(yaw);
+  // base frame and corner posts
+  for (const sx of [-1.4, 1.4]) for (const sz of [-1.4, 1.4]) g.box(TIMBER, sx, 3.2, sz, 0.32, 6.4, 0.32, 2);
+  for (const h of [0.3, 3.2, 6.3]) { g.box(TIMBER, 0, h, -1.4, 3.1, 0.25, 0.25, 2); g.box(TIMBER, 0, h, 1.4, 3.1, 0.25, 0.25, 2); g.box(TIMBER, -1.4, h, 0, 0.25, 0.25, 3.1, 2); g.box(TIMBER, 1.4, h, 0, 0.25, 0.25, 3.1, 2); }
+  // diagonal braces
+  for (const s of [-1, 1]) { g.push().translate(s * 1.4, 1.75, 0).rotateX(0.82); g.box(TIMBER, 0, 0, 0, 0.2, 3.8, 0.2, 2); g.pop(); }
+  // treadwheel on the side: two rims, spokes, the tread boards
+  g.push().translate(0, 2.4, -2.3).rotateX(Math.PI / 2);
+  for (const s of [-0.7, 0.7]) { g.cyl(TIMBER, 0, s - 0.08, 0, 2.2, 2.2, 0.16, 28, false, 2); g.cyl(TIMBER, 0, s - 0.09, 0, 2.0, 2.0, 0.18, 28, false, 2); }
+  g.pop();
+  for (let i = 0; i < 16; i++) { const a = (i / 16) * Math.PI * 2; g.push().translate(0, 2.4 + Math.sin(a) * 2.1, -2.3 + Math.cos(a) * 0.0).translate(Math.cos(a) * 2.1, 0, 0).rotateZ(a); g.box(PLANK, 0, 0, 0, 0.12, 0.3, 1.5, 1.5); g.pop(); }
+  g.push().translate(0, 2.4, -2.3).rotateZ(Math.PI / 2); g.cyl(TIMBER, 0, -1.0, 0, 0.18, 0.18, 2.0, 10); g.pop();   // axle
+  // roof over the tower and the jib reaching out over the water
+  for (const s of [-1, 1]) { g.push().translate(0, 7.2, s * 0.8).rotateX(s * 0.6); g.box('mat:roof_slates_02', 0, 0, 0, 3.6, 0.08, 2.2, 0.6); g.pop(); }
+  g.push().translate(0, 6.8, 1.2).rotateX(-0.35); g.box(TIMBER, 0, 0, 3.2, 0.3, 0.35, 7.2, 2); g.pop();
+  const tipY = 6.8 + Math.sin(0.35) * 6.8, tipZ = 1.2 + Math.cos(0.35) * 6.6;
+  g.cyl('color:6a5a40|r:0.9', 0, tipY - 4.5, tipZ, 0.02, 0.02, 4.5, 4);
+  g.cyl('iron', 0, tipY - 4.8, tipZ, 0.06, 0.06, 0.3, 6);
+  g.pop();
+  out.colliders.push({ c: new THREE.Vector3(x, y + 3.2, z), h: new THREE.Vector3(1.6, 3.2, 1.6), q: yq(yaw) });
+}
+
+/** Stone lighthouse on a rock: tapering tower, gallery, lantern room with a fire burning at night. */
+export function lighthouse(out: StructModel, x: number, z: number, ground: (x: number, z: number) => number) {
+  const y = Math.max(ground(x, z), -2), g = out.geo;
+  g.cyl('mat:stacked_stone_wall|wx:1.5', x, y - 4, z, 5.5, 4.5, 6.5, 18, true, 0.5);                       // rock base
+  g.cyl('mat:white_sandstone_blocks_02|wx:0.6', x, y + 2.5, z, 3.0, 2.2, 16, 20, false, 0.6);            // tower
+  for (let i = 0; i < 3; i++) g.cyl('mat:medieval_blocks_02|tint:8a6a5a', x, y + 6 + i * 4.5, z, 3.0 - i * 0.22 + 0.06, 3.0 - i * 0.22, 0.4, 20, false, 0.6);  // bands
+  g.cyl('mat:medieval_blocks_02', x, y + 18.5, z, 2.9, 2.9, 0.5, 20, true, 0.6);                          // gallery
+  for (let i = 0; i < 12; i++) { const a = (i / 12) * Math.PI * 2; g.box('iron', x + Math.cos(a) * 2.75, y + 19.4, z + Math.sin(a) * 2.75, 0.06, 0.9, 0.06); }
+  for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2; g.box('iron', x + Math.cos(a) * 1.4, y + 20.2, z + Math.sin(a) * 1.4, 0.12, 2.4, 0.12); }
+  g.cyl('glass', x, y + 19.0, z, 1.42, 1.42, 2.4, 16, false);
+  g.cyl('mat:roof_slates_02', x, y + 21.4, z, 1.9, 0.15, 1.9, 16, true, 0.6);                             // cap
+  g.cyl('color:ffb050|e:6', x, y + 19.4, z, 0.5, 0.35, 0.9, 10, true);                                    // the fire
+  // door
+  g.box(TIMBER, x, y + 3.6, z + 2.75, 1.1, 2.2, 0.3, 2);
+  out.torches.push(new THREE.Vector3(x, y + 19.9, z));
+  out.colliders.push({ c: new THREE.Vector3(x, y + 8, z), h: new THREE.Vector3(2.4, 11, 2.4) });
+  out.colliders.push({ c: new THREE.Vector3(x, y - 1, z), h: new THREE.Vector3(4.6, 3.2, 4.6) });
+}
+
+/** Cargo on the quay: crates, barrels and sacks stacked anyhow. */
+export function cargo(out: StructModel, x: number, z: number, yaw: number, ground: (x: number, z: number) => number, seed: number) {
+  const y = ground(x, z), g = out.geo;
+  let s = seed;
+  const rnd = () => ((s = (s * 16807) % 2147483647) / 2147483647);
+  g.push().translate(x, y, z).rotateY(yaw);
+  for (let i = 0; i < 6; i++) {
+    const kind = rnd();
+    const px = (rnd() - 0.5) * 3, pz = (rnd() - 0.5) * 2.4;
+    if (kind < 0.45) { const sz = 0.7 + rnd() * 0.5; const stack = rnd() < 0.4 ? 2 : 1; for (let k = 0; k < stack; k++) { g.push().translate(px, sz / 2 + k * sz, pz).rotateY(rnd() * 0.6); g.box(PLANK, 0, 0, 0, sz, sz, sz, 1.2); g.pop(); } }
+    else if (kind < 0.8) { g.cyl('wood:planks|stain:walnut|fin:raw', px, 0, pz, 0.36, 0.36, 0.95, 14, true, 1); g.cyl('iron', px, 0.15, pz, 0.375, 0.375, 0.06, 14, false); g.cyl('iron', px, 0.75, pz, 0.375, 0.375, 0.06, 14, false); }
+    else g.ellipsoid('cloth:burlap', px, 0.3, pz, 0.38, 0.32, 0.28, 10, 0.9);
+  }
+  g.pop();
+  out.colliders.push({ c: new THREE.Vector3(x, y + 0.6, z), h: new THREE.Vector3(1.6, 0.6, 1.3), q: yq(yaw) });
+}
+
+/** A fish-drying rack: poles and rails hung with split fish. */
+export function fishRack(out: StructModel, x: number, z: number, yaw: number, ground: (x: number, z: number) => number) {
+  const y = ground(x, z), g = out.geo;
+  g.push().translate(x, y, z).rotateY(yaw);
+  for (const s of [-1.6, 0, 1.6]) g.cyl(TIMBER, s, -0.2, 0, 0.06, 0.05, 2.2, 6, true, 2);
+  for (const h of [1.2, 1.8]) { g.push().translate(0, h, 0).rotateZ(Math.PI / 2); g.cyl(TIMBER, 0, -1.7, 0, 0.04, 0.04, 3.4, 6); g.pop(); }
+  for (let i = 0; i < 14; i++) { const fx = -1.5 + (i % 7) * 0.5, fy = i < 7 ? 1.0 : 1.6; g.ellipsoid('silver', fx, fy, 0, 0.06, 0.2, 0.02, 6, 0.8); }
+  g.pop();
+}
+
+/** A stone quay wall along the shore with bollards and steps down to the water. */
+export function quay(out: StructModel, x: number, z: number, yaw: number, len: number, ground: (x: number, z: number) => number) {
+  const g = out.geo;
+  const sx = Math.cos(yaw), sz = -Math.sin(yaw), fx = Math.sin(yaw), fz = Math.cos(yaw);
+  const top = Math.max(1.6, ground(x, z) + 0.2);
+  const n = Math.ceil(len / 4);
+  for (let i = 0; i < n; i++) {
+    const t = -len / 2 + (i + 0.5) * (len / n);
+    const cx = x + sx * t, cz = z + sz * t;
+    const bottom = Math.min(-2.5, ground(cx + fx * 2, cz + fz * 2) - 1);
+    g.push().translate(cx, 0, cz).rotateY(yaw);
+    g.box('mat:medieval_blocks_02|wx:1.2', 0, (top + bottom) / 2, 1.0, len / n + 0.05, top - bottom, 3.0, 0.4);
+    g.box('mat:white_sandstone_blocks_02|tint:b8b0a4|wx:0.6', 0, top + 0.06, 2.35, len / n + 0.05, 0.12, 0.6, 0.6);   // coping
+    if (i % 3 === 1) g.cyl('mat:medieval_blocks_02|tint:6a6460', 0, top, 2.2, 0.22, 0.18, 0.6, 10, true);            // bollard
+    g.pop();
+    out.colliders.push({ c: new THREE.Vector3(cx + fx * 1.0, (top + bottom) / 2, cz + fz * 1.0), h: new THREE.Vector3(len / n / 2 + 0.05, (top - bottom) / 2, 1.5), q: yq(yaw) });
+  }
+}

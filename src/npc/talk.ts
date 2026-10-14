@@ -119,6 +119,14 @@ export class Talk {
         return back(`Still need ${e.n} ${ITEMS[e.item].name.toLowerCase()}${e.n > 1 ? 's' : ''}. ${e.pay} pennies when you bring them.`);
       } });
     } else if (p.role !== 'guard' && p.role !== 'lord' && p.role !== 'child') o.push({ label: 'Is there anything I can help with?', go: () => this.errand(n) });
+    if (p.role === 'stablemaster' || p.role === 'ferryman') o.push({ label: p.role === 'ferryman' ? 'I need passage by boat.' : 'Hire a horse and guide to another town.', go: () => this.travel(n) });
+    if (p.role === 'stablemaster') o.push({ label: 'Buy a horse (60 pennies)', go: () => {
+      if (g.interaction.money < 60) return back('Sixty pennies, friend. A good horse is worth every one.');
+      g.interaction.money -= 60;
+      const a = g.spawnAnimal('horse', n.st.pos.clone().add(new THREE.Vector3(2, 0, 2)));
+      a.owner = 'player';
+      return back('She\'s yours. Feed her, rest her, and she\'ll carry you to the end of the world.');
+    } });
     if (p.role === 'innkeeper') o.push({ label: 'Rent a room (10 pennies)', go: () => { if (g.interaction.money >= 10) { g.interaction.money -= 10; g.rentedRoom = p.home; return back('Upstairs, second door. Sleep well.'); } return back('Come back when you have coin.'); } });
     if (p.role === 'merchant' || p.role === 'innkeeper' || p.role === 'blacksmith') o.push({ label: 'Let\'s trade.', go: () => { g.ui.openTrade(n); return null; } });
     if (p.role === 'guard' && g.law.bountyIn(k as Kingdom) > 0) o.push({ label: `Pay my fine (${g.law.bountyIn(k as Kingdom)} pennies)`, go: () => { g.law.payFine(n); return back(g.law.bountyIn(k as Kingdom) > 0 ? 'You can\'t cover it. Then you\'ll work it off in the cells — unless you run.' : 'Paid in full. Keep your nose clean.'); } });
@@ -127,6 +135,32 @@ export class Talk {
     o.push({ label: 'Out of my way, peasant. (Insult)', go: () => { m.liking -= 0.5; if (p.temperament > 0.75 && p.role !== 'child') { n.hostile = true; n.say('Right. You asked for it!', true); return null; } return back(p.role === 'guard' ? 'Watch your tongue, or I\'ll watch it for you from inside a cell.' : pick(['How dare you!', 'Charming. Leave me be.', 'Go boil your head.'])); } });
     o.push({ label: 'Farewell.', go: () => null });
     return { line, options: o };
+  }
+
+  /** Fast travel: a hired horse and guide (any town with a stable yard) or a boat between the ports. */
+  private travel(n: NPC): DNode {
+    const g = this.game, P = g.player.pos;
+    const back = (l: string) => this.root(n, l);
+    const boat = n.person.role === 'ferryman';
+    const dests = g.towns.plans.filter((pl) => !pl.minor && (boat ? !!pl.site.dock : !!pl.stableYard) && Math.hypot(pl.site.x - P.x, pl.site.z - P.z) > 300)
+      .sort((a, b) => Math.hypot(a.site.x - P.x, a.site.z - P.z) - Math.hypot(b.site.x - P.x, b.site.z - P.z));
+    if (!dests.length) return back(boat ? 'No other harbour I sail to.' : 'Nowhere I can take you from here.');
+    const opts: DOption[] = dests.slice(0, 8).map((pl) => {
+      const d = Math.hypot(pl.site.x - P.x, pl.site.z - P.z) * 1.25;          // roads wind
+      const hours = d / ((boat ? 2.2 : 1.3) * 3600);                           // a steady trot / a fair wind, with rests and tolls
+      const cost = Math.max(5, Math.round(d / (boat ? 90 : 120)));
+      const enemy = kingdomAt(pl.site.x, pl.site.z) !== kingdomAt(P.x, P.z) && kingdomAt(pl.site.x, pl.site.z) !== 'isles' && kingdomAt(P.x, P.z) !== 'isles';
+      return { label: `${pl.site.name} — ${cost}d, about ${hours < 1 ? Math.round(hours * 60) + ' min' : hours.toFixed(1) + ' h'}${enemy ? ' (across the front)' : ''}`, go: () => {
+        if (g.interaction.money < cost) return back(`That's ${cost} pennies. Come back when you have them.`);
+        if (enemy && n.person.temperament > 0.4) return back('Across the river? In a war? Not for any money.');
+        g.interaction.money -= cost;
+        g.ui.close(); this.end();
+        g.fastTravel(pl, hours);
+        return null;
+      } };
+    });
+    opts.push({ label: 'Never mind.', go: () => back('Suit yourself.') });
+    return { line: boat ? 'Where are you bound? Tides wait for no one.' : 'Where to? My lad will ride with you and bring the horse back.', options: opts };
   }
 
   private who(n: NPC): DNode {

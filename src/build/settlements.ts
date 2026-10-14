@@ -7,7 +7,7 @@ import type { World } from '../world/world';
 import { Towns, type Placed, type TownPlan } from '../world/towns';
 import { generateBuilding, type BuildingModel } from './building';
 import { riverLevel } from '../world/layout';
-import { buildWalls, buildBridge, buildDock, fenceRect, well, stall, haystack, lampPost, type StructModel } from './structures';
+import { buildWalls, buildBridge, buildDock, fenceRect, well, stall, haystack, lampPost, trough, crane, lighthouse, cargo, fishRack, quay, type StructModel } from './structures';
 import { GeoBuilder } from './geom';
 import { BatchPool, type BatchHandle } from '../render/batch';
 import { LAYER_NEAR_DETAIL, LAYER_FAR_SHADOW } from '../render/pipeline';
@@ -152,6 +152,14 @@ export class Settlements {
       p.stalls.forEach((st, i) => stall(town, st.x, st.z, st.yaw, st.goods, ground, i + p.site.x));
       p.haystacks.forEach(([x, z], i) => haystack(town, x, z, ground, 0.8 + (i % 3) * 0.15));
       for (const [x, z] of p.lamps) lampPost(town, x, z, ground);
+      p.extras.forEach((e, i) => {
+        if (e.kind === 'trough') trough(town, e.x, e.z, e.yaw, ground);
+        else if (e.kind === 'crane') crane(town, e.x, e.z, e.yaw, ground);
+        else if (e.kind === 'lighthouse') lighthouse(town, e.x, e.z, ground);
+        else if (e.kind === 'cargo') cargo(town, e.x, e.z, e.yaw, ground, 1000 + i * 77);
+        else if (e.kind === 'rack') fishRack(town, e.x, e.z, e.yaw, ground);
+        else if (e.kind === 'quay') quay(town, e.x, e.z, e.yaw, e.len ?? 60, ground);
+      });
       if (p.minor) continue;
       add(town);
       this.buildTownLod(p.site.id, p.buildings);

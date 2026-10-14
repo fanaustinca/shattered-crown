@@ -32,6 +32,10 @@ export interface TownPlan {
   anyLive?: boolean;
   /** a lone farmstead (no walls, market or name on the map) */
   minor?: boolean;
+  /** the stable yard by the road outside town: where you hire horses and where fast travel arrives */
+  stableYard?: { x: number; z: number; yaw: number; stable: string; arrive: [number, number] };
+  /** small structures: water troughs, harbour cranes, lighthouses, cargo stacks, fish racks, quays */
+  extras: { kind: 'trough' | 'crane' | 'lighthouse' | 'cargo' | 'rack' | 'quay'; x: number; z: number; yaw: number; len?: number }[];
 }
 
 const FIRST_M = ['Aldric', 'Bran', 'Cedric', 'Dunstan', 'Edmund', 'Falk', 'Godric', 'Harold', 'Ivo', 'Jory', 'Kenric', 'Leofric', 'Merek', 'Nyle', 'Osric', 'Piers', 'Quill', 'Roderick', 'Simon', 'Tobias', 'Ulric', 'Wat', 'Wystan', 'Hugh', 'Gerald', 'Ansel', 'Brom', 'Corin', 'Daveth', 'Emeric'];
@@ -70,10 +74,14 @@ export class Towns {
       let near = false;
       for (const road of w.roads) { for (let i = 0; i < road.pts.length; i += 30) if (Math.hypot(road.pts[i] - x, road.pts[i + 1] - z) < 520) { near = true; break; } if (near) break; }
       if (!near && r() < 0.8) continue;
+      // about a third are little hamlets: three or four farmhouses spread around a green with a well
+      const hamlet = r() < 0.34 && w.slopeAt(x, z) < 0.07 && !spots.some(([sx, sz]) => Math.hypot(sx - x, sz - z) < 300);
       spots.push([x, z]); got[k]++;
       const fam = FAMILY[Math.floor(r() * FAMILY.length)];
-      const site: Site = { id: `farm${spots.length}`, name: `${fam} Farm`, kind: 'village', kingdom: k, x, z, r: 24 };
+      const site: Site = { id: `farm${spots.length}`, name: hamlet ? (() => { const suf = ['ley', 'thorpe', 'wick', 'stead', 'cott', 'ham'][Math.floor(r() * 6)]; const base = fam.replace(/(wick|ley|ham|stead|ton|by|worth|field|wood|ford|brook)$/i, ''); return (base.length > 2 ? base : fam) + suf; })() : `${fam} Farm`, kind: 'village', kingdom: k, x, z, r: hamlet ? 60 : 24 };
+      this.hamletNext = hamlet;
       const plan = this.planSite(site, true);
+      this.hamletNext = false;
       if (plan.buildings.length) this.plans.push(plan);
     }
   }
@@ -82,7 +90,7 @@ export class Towns {
     const w = this.world;
     const r = mulberry32(site.x * 13 + site.z * 7 + 99);
     const N = w.noise;
-    const plan: TownPlan = { site, buildings: [], walls: null, plaza: { x: site.x, z: site.z, r: site.kind === 'capital' ? 22 : minor ? 0 : 13 }, wells: [], stalls: [], keep: null, docks: [], streets: [], gardens: [], paddocks: [], orchards: [], haystacks: [], lamps: [], siteR: site.r, minor };
+    const plan: TownPlan = { site, buildings: [], walls: null, plaza: { x: site.x, z: site.z, r: site.kind === 'capital' ? 22 : minor ? 0 : 13 }, wells: [], stalls: [], keep: null, docks: [], streets: [], gardens: [], paddocks: [], orchards: [], haystacks: [], lamps: [], siteR: site.r, minor, extras: [] };
     const iron = site.kingdom === 'ironreach';
     const isles = site.kingdom === 'isles';
     const baseY = w.heightAt(site.x, site.z);
@@ -346,7 +354,10 @@ export class Towns {
       }
       for (let i = 0; i < 4; i++) { const a = axis + i * 1.57 + 0.78 + (r() - 0.5) * 0.4; plan.stalls.push({ x: site.x + Math.cos(a) * (plan.plaza.r - 3), z: site.z + Math.sin(a) * (plan.plaza.r - 3), yaw: -a - Math.PI / 2, goods: ['fruit', 'bread', 'cloth', 'meat'][i] }); }
     }
-    if (minor) this.homestead(plan, add, r);
+    if (!minor) this.stableYardFor(plan, add, wallR, r);
+    if (!minor && site.dock) this.harbour(plan, add, r);
+    if (minor && this.hamletNext) this.hamlet(plan, add, r);
+    else if (minor) this.homestead(plan, add, r);
     else this.enrich(plan, r, add, overlaps, okGround, placed);
     this.populate(plan, r);
     for (const b of plan.buildings) plan.siteR = Math.max(plan.siteR, Math.hypot(b.x - site.x, b.z - site.z) + 12);
@@ -392,6 +403,104 @@ export class Towns {
   }
 
   /** A lone farmstead out on the land: a cottage, maybe a barn, a garden, a paddock, a path to the road. */
+  private hamletNext = false;
+  /** A stable yard on the main road just outside town: the stable, a paddock of horses, hay and a trough. */
+  private stableYardFor(plan: TownPlan, add: (t: BType, x: number, z: number, yaw: number, o?: Partial<BuildingSpec>, relaxed?: boolean) => Placed | null, wallR: ((a: number) => number) | null, r: () => number) {
+    const site = plan.site, w = this.world;
+    const edge = (x: number, z: number) => (wallR ? wallR(Math.atan2(z - site.z, x - site.x)) : site.r * 0.8);
+    for (const road of w.roads) {
+      const P = road.pts, n = P.length / 3;
+      const d0 = Math.hypot(P[0] - site.x, P[1] - site.z), d1 = Math.hypot(P[(n - 1) * 3] - site.x, P[(n - 1) * 3 + 1] - site.z);
+      if (Math.min(d0, d1) > site.r * 0.6) continue;
+      const dir = d0 < d1 ? 1 : -1;
+      for (let k = dir > 0 ? 0 : n - 1; k >= 0 && k < n; k += dir) {
+        const x = P[k * 3], z = P[k * 3 + 1];
+        const dc = Math.hypot(x - site.x, z - site.z);
+        if (dc < edge(x, z) + 28) continue;
+        if (dc > edge(x, z) + 160) break;
+        const k2 = Math.min(n - 1, Math.max(0, k + dir * 3));
+        const tx = P[k2 * 3] - x, tz = P[k2 * 3 + 1] - z, tl = Math.hypot(tx, tz) || 1;
+        for (const side of [1, -1]) {
+          const nx = -tz / tl * side, nz = tx / tl * side;
+          const bx = x + nx * 13, bz = z + nz * 13;
+          const st = add('stable', bx, bz, Math.atan2(-nx, -nz), { style: site.kingdom === 'ironreach' ? 'stone' : 'timber', wealth: 0.4 } as Partial<BuildingSpec>, true);
+          if (!st) continue;
+          // paddock alongside, trough by the gate, hay
+          const px = bx + tx / tl * 20, pz = bz + tz / tl * 20, pyaw = Math.atan2(-nx, -nz);
+          if (w.slopeAt(px, pz) < 0.25) { w.paintPlot(px, pz, 18, 14, pyaw, 0, 0.35); plan.paddocks.push({ x: px, z: pz, w: 18, d: 14, yaw: pyaw, species: 'horse' }); }
+          plan.extras.push({ kind: 'trough', x: x + nx * 6 + tx / tl * 6, z: z + nz * 6 + tz / tl * 6, yaw: Math.atan2(tx, tz) });
+          plan.haystacks.push([bx - tx / tl * 9, bz - tz / tl * 9]);
+          plan.lamps.push([x + nx * 4, z + nz * 4]);
+          plan.stableYard = { x: bx, z: bz, yaw: Math.atan2(-nx, -nz), stable: st.id, arrive: [x + nx * 5, z + nz * 5] };
+          w.trail(bx, bz, x, z, 3, 0.8);
+          return;
+        }
+      }
+    }
+  }
+  /** A working harbour: stone quay, treadwheel crane, cargo stacks, fish-drying racks, more jetties, a lighthouse. */
+  private harbour(plan: TownPlan, add: (t: BType, x: number, z: number, yaw: number, o?: Partial<BuildingSpec>, relaxed?: boolean) => Placed | null, r: () => number) {
+    const d = plan.site.dock!, w = this.world;
+    const fx = Math.sin(d.yaw), fz = Math.cos(d.yaw);           // out along the main pier
+    const sx = Math.cos(d.yaw), sz = -Math.sin(d.yaw);          // along the shore
+    // walk back from the pier head to find the shore line
+    let qx = d.x, qz = d.z;
+    for (let k = 0; k < 60; k++) { const x = d.x - fx * k, z = d.z - fz * k; if (w.heightAt(x, z) > 1.0) { qx = x; qz = z; break; } }
+    plan.extras.push({ kind: 'quay', x: qx, z: qz, yaw: d.yaw, len: 70 });
+    plan.extras.push({ kind: 'crane', x: qx + sx * 9 - fx * 2, z: qz + sz * 9 - fz * 2, yaw: d.yaw });
+    for (let i = 0; i < 4; i++) plan.extras.push({ kind: 'cargo', x: qx + sx * (-14 - i * 4.5) - fx * (3 + r() * 3), z: qz + sz * (-14 - i * 4.5) - fz * (3 + r() * 3), yaw: d.yaw + (r() - 0.5) * 0.4 });
+    for (let i = 0; i < 3; i++) plan.extras.push({ kind: 'rack', x: qx + sx * (22 + i * 5) - fx * 6, z: qz + sz * (22 + i * 5) - fz * 6, yaw: d.yaw + Math.PI / 2 });
+    for (const sd of [-1, 1]) plan.docks.push({ x: qx + sx * sd * 28 + fx * 11, z: qz + sz * sd * 28 + fz * 11, yaw: d.yaw, len: 22 });
+    // lighthouse at the end of the breakwater, on the seaward side
+    plan.extras.push({ kind: 'lighthouse', x: d.x + fx * 55 + sx * 70, z: d.z + fz * 55 + sz * 70, yaw: d.yaw });
+    // harbour warehouses on the quay
+    for (const sd of [-1, 1]) add('warehouse', qx + sx * sd * 16 - fx * 15, qz + sz * sd * 16 - fz * 15, d.yaw + Math.PI, {}, true);
+  }
+  /** A farming hamlet: a few houses well apart around a green and a well, gardens, a barn, open fields. */
+  private hamlet(plan: TownPlan, add: (t: BType, x: number, z: number, yaw: number, o?: Partial<BuildingSpec>, relaxed?: boolean) => Placed | null, r: () => number) {
+    const s = plan.site, w = this.world, iron = s.kingdom === 'ironreach';
+    const style = () => ({ style: iron ? (r() < 0.5 ? 'stone' : 'dark') : r() < 0.4 ? 'timber' : r() < 0.5 ? 'plaster' : 'rustic', roof: iron ? 'slate' : r() < 0.6 ? 'thatch' : 'shingle', wealth: r() * 0.45 } as Partial<BuildingSpec>);
+    plan.wells.push([s.x + (r() - 0.5) * 4, s.z + (r() - 0.5) * 4]);
+    const n = 3 + (r() < 0.5 ? 1 : 0);
+    const a0 = r() * Math.PI * 2;
+    const homes: Placed[] = [];
+    for (let i = 0; i < n; i++) {
+      const a = a0 + (i / n) * Math.PI * 2 + (r() - 0.5) * 0.7, rad = 20 + r() * 22;
+      const hx = s.x + Math.cos(a) * rad, hz = s.z + Math.sin(a) * rad;
+      // face the green, not quite squarely
+      const yaw = Math.atan2(s.x - hx, s.z - hz) + (r() - 0.5) * 0.5;
+      const h = add(r() < 0.6 ? 'cottage' : 'house', hx, hz, yaw, style(), true);
+      if (!h) continue;
+      homes.push(h);
+      const back = [-Math.sin(yaw), -Math.cos(yaw)];
+      const gd = 6 + r() * 4, gw = 7 + r() * 5;
+      const gx = hx + back[0] * (h.spec.d / 2 + gd / 2 + 1.5), gz = hz + back[1] * (h.spec.d / 2 + gd / 2 + 1.5);
+      if (w.slopeAt(gx, gz) < 0.2) { w.paintPlot(gx, gz, gw, gd, yaw, r() < 0.6 ? 3 : 1, 1); plan.gardens.push({ x: gx, z: gz, w: gw, d: gd, yaw }); }
+      // a worn path from the door to the green
+      w.trail(hx + Math.sin(yaw) * (h.spec.d / 2), hz + Math.cos(yaw) * (h.spec.d / 2), s.x, s.z, 1.6, 0.6);
+    }
+    if (!homes.length) return;
+    // the shared barn and a paddock on the edge
+    const ba = a0 + Math.PI / n, bx = s.x + Math.cos(ba) * 34, bz = s.z + Math.sin(ba) * 34;
+    add('barn', bx, bz, Math.atan2(s.x - bx, s.z - bz) + Math.PI / 2, { style: 'rustic' } as Partial<BuildingSpec>, true);
+    const pa = ba + 0.6, px = s.x + Math.cos(pa) * 55, pz = s.z + Math.sin(pa) * 55;
+    if (w.slopeAt(px, pz) < 0.2 && w.heightAt(px, pz) > w.waterLevelAt(px, pz) + 1) {
+      w.paintPlot(px, pz, 22, 16, pa, 0, 0.35);
+      plan.paddocks.push({ x: px, z: pz, w: 22, d: 16, yaw: pa, species: (iron ? ['pig', 'donkey'] : ['cow', 'cow', 'horse', 'pig'])[Math.floor(r() * (iron ? 2 : 4))] as TownPlan['paddocks'][number]['species'] });
+    }
+    // strip fields all around, the way open-field villages farmed
+    for (let f = 0; f < 4 + Math.floor(r() * 3); f++) {
+      const fa = r() * Math.PI * 2, fr = 75 + r() * 45, fx = s.x + Math.cos(fa) * fr, fz = s.z + Math.sin(fa) * fr;
+      if (w.slopeAt(fx, fz) > 0.12 || w.roadAt(fx, fz) > 0.05 || w.heightAt(fx, fz) < w.waterLevelAt(fx, fz) + 1.5) continue;
+      w.paintPlot(fx, fz, 18 + r() * 14, 40 + r() * 30, fa + Math.PI / 2, 1 + Math.floor(r() * 3), 1);
+    }
+    for (let h = 0; h < 2 + Math.floor(r() * 3); h++) plan.haystacks.push([bx + (r() - 0.5) * 14, bz + (r() - 0.5) * 14]);
+    // the lane out to the nearest road
+    let tx = 0, tz = 0, bd = 1e9;
+    for (const road of w.roads) for (let i = 0; i < road.pts.length; i += 15) { const d = (road.pts[i] - s.x) ** 2 + (road.pts[i + 1] - s.z) ** 2; if (d < bd) { bd = d; tx = road.pts[i]; tz = road.pts[i + 1]; } }
+    if (bd < 800 * 800) w.trail(s.x, s.z, tx, tz, 2.6, 0.8);
+  }
+
   private homestead(plan: TownPlan, add: (t: BType, x: number, z: number, yaw: number, o?: Partial<BuildingSpec>, relaxed?: boolean) => Placed | null, r: () => number) {
     const s = plan.site, w = this.world;
     // face the nearest road (or the nearest town)
@@ -521,6 +630,16 @@ export class Towns {
         const members = [mk(b.id, 'lord', r() < 0.3, 40 + Math.floor(r() * 20)), mk(b.id, 'steward', r() < 0.5, 30 + Math.floor(r() * 20)), mk(b.id, 'guard', false, 25), mk(b.id, 'guard', false, 30), mk(b.id, 'servant', true, 20)];
         b.household = { id: b.id, family: plan.site.kingdom === 'ironreach' ? 'House Varr' : plan.site.kingdom === 'vanguardia' ? 'House Aurel' : 'the Warden', members, wealth: 1 };
         b.owner = members[0].id;
+        this.people.push(...members);
+      } else if (t === 'stable' && plan.stableYard?.stable === b.id) {
+        const members = [mk(b.id, 'stablemaster', r() < 0.25, 30 + Math.floor(r() * 25)), mk(b.id, 'laborer', r() < 0.3, 16 + Math.floor(r() * 10))];
+        members[0].work = b.id; members[1].work = b.id;
+        b.household = { id: b.id, family: 'the stables', members, wealth: 0.4 };
+        this.people.push(...members);
+      } else if (t === 'warehouse' && plan.site.dock && !plan.buildings.some((x) => x.household?.members.some((m) => m.role === 'ferryman'))) {
+        const members = [mk(b.id, 'ferryman', false, 35 + Math.floor(r() * 25))];
+        members[0].work = b.id;
+        b.household = { id: b.id, family: 'the harbour', members, wealth: 0.3 };
         this.people.push(...members);
       } else if (t === 'chapel') {
         const members = [mk(b.id, 'priest', r() < 0.3, 50)];

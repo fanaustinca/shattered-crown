@@ -14,7 +14,7 @@ import { Input } from './core/input';
 import { Player } from './player/player';
 import { siteById, SITES, riverX, riverWidth, HALF, nearestSite } from './world/layout';
 import { CreatureLib } from './creature/rig';
-import { Fauna, type GameCtx, type Animal } from './creature/animals';
+import { Fauna, type GameCtx, Animal } from './creature/animals';
 import { setMaterialPrep } from './props/palette';
 import { Towns } from './world/towns';
 import { Settlements } from './build/settlements';
@@ -471,6 +471,35 @@ export class Game {
     this.pipeline.finalUniforms.uFade.value = 0;
     this.hud.toast(`You wake. It is ${Math.floor(this.hours)}:${String(Math.floor((this.hours % 1) * 60)).padStart(2, '0')}.`);
     if (this.player.seat && this.sleepingIn) this.player.standUp();
+  }
+
+  /** A new animal that persists with the player's world (bought, spawned). */
+  spawnAnimal(species: 'horse' | 'donkey' | 'cow' | 'pig', at: THREE.Vector3) {
+    at.y = this.groundAt(at.x, at.z, at.y + 2);
+    const a = new Animal(species, this.ctx, at, at.clone(), 10, Math.floor(Math.random() * 1e9));
+    this.fauna.extra.push(a);
+    return a;
+  }
+
+  /** Travel to another town's stable yard (hired horse and guide, or a boat): time passes, you arrive at the
+   *  outskirts by the stables. A horse you are riding or leading comes with you. */
+  fastTravel(plan: { site: { name: string; x: number; z: number }; stableYard?: { arrive: [number, number] }; plaza: { x: number; z: number } }, hours: number) {
+    const [x, z] = plan.stableYard?.arrive ?? [plan.plaza.x + 6, plan.plaza.z + 6];
+    const mount = this.mount;
+    if (this.player.seat) this.player.standUp();
+    this.pipeline.finalUniforms.uFade.value = 1;
+    const before = this.hours;
+    this.hours = (this.hours + hours) % 24;
+    if (this.hours < before) this.dayCount++;
+    this.interaction.pack.age(hours * 3600);
+    this.player.satiety = Math.max(0, this.player.satiety - hours * 3);
+    this.player.spawn(x, z);
+    this.residents.update(settings.simRadius);
+    this.settlements.update(this.player.pos, 6);
+    if (mount && mount.mode !== 'dead') { mount.teleport(new THREE.Vector3(x + 2.5, this.groundAt(x + 2.5, z), z + 1.5)); this.physics.world.propagateModifiedBodyPositionsToColliders(); mount.mount(this.player); }
+    this.lighting.forceShadows = true;
+    setTimeout(() => { this.pipeline.finalUniforms.uFade.value = 0; }, 900);
+    this.hud.toast(`After ${hours < 1 ? Math.round(hours * 60) + ' minutes' : hours.toFixed(1) + ' hours'} on the road you reach ${plan.site.name}.`);
   }
 
   respawn() {

@@ -4,7 +4,6 @@ import * as THREE from 'three';
 import type { Game } from './game';
 import { Ship } from './vehicles/ship';
 import { Cart } from './vehicles/cart';
-import { Animal } from './creature/animals';
 import { ITEMS } from './props/items';
 import { SITES } from './world/layout';
 import type { WeatherKind } from './render/weather';
@@ -33,8 +32,7 @@ export function installDevConsole(game: Game) {
   const animal = (species: 'horse' | 'donkey' | 'cow' | 'pig', n = 1) => {
     for (let i = 0; i < n; i++) {
       const p = ahead(4 + i * 2.5, (i % 2 ? 1 : -1) * 1.5);
-      const a = new Animal(species, g.ctx, p, p.clone(), 10, Math.floor(Math.random() * 1e9));
-      g.fauna.extra.push(a);
+      g.spawnAnimal(species, p);
     }
     return say(`Spawned ${n} ${species}${n > 1 ? 's' : ''}.`);
   };

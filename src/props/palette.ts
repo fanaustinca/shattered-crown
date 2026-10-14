@@ -78,7 +78,7 @@ export function material(key: string): THREE.Material {
     case 'glass': m = new THREE.MeshPhysicalMaterial({ color: opts.c ? parseInt(opts.c, 16) : 0xc8d8c8, roughness: 0.05, metalness: 0, transparent: true, opacity: 0.35, envMapIntensity: 1.5 }); break;
     case 'straw': m = pbr('thatch_roof_angled', { color: 0xf0d890 }).clone(); break;
     case 'paper': m = new THREE.MeshStandardMaterial({ color: opts.c ? parseInt(opts.c, 16) : 0xe8dcc0, roughness: 0.95 }); break;
-    case 'color': m = new THREE.MeshStandardMaterial({ color: parseInt(name, 16), roughness: opts.r ? +opts.r : 0.8, metalness: opts.m ? +opts.m : 0 }); break;
+    case 'color': m = new THREE.MeshStandardMaterial({ color: parseInt(name, 16), roughness: opts.r ? +opts.r : 0.8, metalness: opts.m ? +opts.m : 0, emissive: opts.e ? parseInt(name, 16) : 0x000000, emissiveIntensity: opts.e ? +opts.e : 1 }); break;
     case 'ceramic': m = new THREE.MeshPhysicalMaterial({ color: opts.c ? parseInt(opts.c, 16) : 0xb07050, roughness: opts.glaze ? 0.25 : 0.85, clearcoat: opts.glaze ? 0.8 : 0, metalness: 0 }); break;
     case 'stone': m = pbr(name || 'stone_tiles_02').clone(); (m as THREE.MeshStandardMaterial).metalness = 0; break;
     default: m = new THREE.MeshStandardMaterial({ color: 0xff00ff });

@@ -77,7 +77,7 @@ export class QuadAnimator {
     }
     this.initFeet = true;
   }
-  private initFeet = true;
+  initFeet = true;
 
   /** Gait table (speed normalised by leg height). Offsets are where each leg's stance begins in the stride,
    *  legs ordered FL, FR, HL, HR. Body motion per gait: vertical bob, rocking pitch (nose up > 0) and the

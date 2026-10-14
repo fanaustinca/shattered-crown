@@ -101,6 +101,13 @@ export class Animal implements Seat {
     p.sitIn(this);
     return true;
   }
+  teleport(p: THREE.Vector3) {
+    this.st.pos.copy(p);
+    const y = p.y + this.spec.bodyY;
+    this.body.setTranslation({ x: p.x, y, z: p.z }, true);
+    this.body.setNextKinematicTranslation({ x: p.x, y, z: p.z });
+    if ('initFeet' in this.anim) this.anim.initFeet = true;
+  }
   leave(_p: Player) { this.rider = null; this.mode = 'idle'; this.timer = 3; }
   /** the rider's view rocks with the gait (a little less than the horse: the rider's body absorbs some) */
   sway() { const r = (this.anim as { rock?: { pitch: number; roll: number } }).rock; return r ? { pitch: r.pitch * 0.45, roll: -r.roll * 0.5 } : { pitch: 0, roll: 0 }; }
