@@ -51,6 +51,16 @@ export function installDevConsole(game: Game) {
       g.carts.push(new Cart(g, p, g.player.yaw + Math.PI / 2, Math.floor(Math.random() * 10)));
       return say('A cart rolls up. Hitch a horse or donkey to it (E at the shafts).');
     },
+    /** start the battle at the nearest front now */
+    battle: () => {
+      const F = g.war.fronts;
+      const f = [...F.fronts].sort((a, b) => F.posAt(a, a.line).p.distanceTo(g.player.pos) - F.posAt(b, b.line).p.distanceTo(g.player.pos))[0];
+      if (!f || f.live) return say('A battle is already being fought there.');
+      F.begin(f);
+      return say(`Battle at ${f.name}! Type tp(${Math.round(F.posAt(f, f.line).p.x)}, ${Math.round(F.posAt(f, f.line).p.z)}) to go there.`);
+    },
+    /** cavalry: n mounted soldiers in front of you */
+    cavalry: (side: Side = 'vanguardia', n = 4) => { for (let i = 0; i < n; i++) g.war.spawnCavalry(side, ahead(10 + i * 3, (i % 2 ? 2 : -2))); return say(`${n} ${side} horsemen.`); },
     /** two squadrons engaging offshore, nearest the coast you're on */
     fleet: () => { const c = g.naval.startBattle(); return say(`The fleets meet about ${Math.round(c.distanceTo(g.player.pos))} m out to sea.`); },
     /** a wagon with a team of n horses already in harness */
@@ -126,6 +136,8 @@ export function installDevConsole(game: Game) {
         ['spawn.fleet(side)', 'two opposing squadrons for a sea battle nearby'],
         ['spawn.army(side, n)', "soldiers ('vanguardia' | 'ironreach') formed up ahead"],
         ['spawn.column(side, n)', 'a column marching down the nearest road to the front'],
+        ['spawn.battle()', 'start the pitched battle at the nearest front now'],
+        ['spawn.cavalry(side, n)', 'mounted soldiers'],
         ['spawn.squad(n)', 'soldiers who follow your orders (2/3/4/5)'],
         ['spawn.item(id, n) · spawn.items()', 'any item, e.g. spawn.item("apple", 10)'],
         ['weather(kind)', 'clear | cloudy | overcast | rain | storm | fog | snow'],

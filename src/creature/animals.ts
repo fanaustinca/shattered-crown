@@ -31,7 +31,11 @@ export class Animal implements Seat {
   st: MoveState;
   target = new THREE.Vector3();
   timer = 0;
-  mode: 'idle' | 'wander' | 'graze' | 'flee' | 'sleep' | 'ridden' | 'led' | 'hitched' | 'dead' = 'idle';
+  mode: 'idle' | 'wander' | 'graze' | 'flee' | 'sleep' | 'ridden' | 'led' | 'hitched' | 'dead' | 'cavalry' = 'idle';
+  /** cavalry: where the rider wants to go and how fast */
+  cav: { target: THREE.Vector3; speed: number } | null = null;
+  /** cavalry: the rider's collider (the horse's controller ignores it) */
+  npcRider: number | null = null;
   rider: Player | null = null;
   leader: Player | null = null;
   hitch: { pos: THREE.Vector3; yaw: number } | null = null;
@@ -131,7 +135,11 @@ export class Animal implements Seat {
     if (this.mode === 'dead') { st.speed = 0; st.action = 'dead'; return; }
     const player = ctx.player;
     const dP = player.pos.distanceTo(st.pos);
-    if (this.mode === 'ridden' && this.rider) {
+    if (this.mode === 'cavalry') {
+      st.look = null; st.ridden = true;
+      if (this.cav) { this.target.copy(this.cav.target); const d = Math.hypot(this.target.x - st.pos.x, this.target.z - st.pos.z); this.steer(dt, d > 1.5 ? this.cav.speed : 0); }
+      else this.steer(dt, 0);
+    } else if (this.mode === 'ridden' && this.rider) {
       st.look = null;
       this.drive(ctx.input, dt);
     } else if (this.mode === 'hitched' && this.hitch) {
@@ -189,7 +197,7 @@ export class Animal implements Seat {
     const wl = ctx.world.waterLevelAt(t.x + desired.x * 8, t.z + desired.z * 8);
     if (this.mode !== 'ridden' && wl > ctx.groundAt(t.x + desired.x * 8, t.z + desired.z * 8) + 0.9) { desired.x = 0; desired.z = 0; this.pickWander(); }
     this.body.setNextKinematicRotation(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), st.yaw));
-    this.kcc.computeColliderMovement(this.collider, desired, RAPIER.QueryFilterFlags.EXCLUDE_SENSORS, groups(G_CHAR, this.mode === 'hitched' ? G_STATIC : (G_STATIC | G_CHAR | 2 | 16) & ~(this.rider ? G_CHAR : 0)), (c) => c.handle !== this.rider?.collider.handle);
+    this.kcc.computeColliderMovement(this.collider, desired, RAPIER.QueryFilterFlags.EXCLUDE_SENSORS, groups(G_CHAR, this.mode === 'hitched' ? G_STATIC : (G_STATIC | G_CHAR | 2 | 16) & ~(this.rider ? G_CHAR : 0)), (c) => c.handle !== this.rider?.collider.handle && c.handle !== this.npcRider);
     const mv = this.kcc.computedMovement();
     const nt = { x: t.x + mv.x, y: t.y + mv.y, z: t.z + mv.z };
     this.body.setNextKinematicTranslation(nt);

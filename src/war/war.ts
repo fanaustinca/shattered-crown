@@ -3,7 +3,7 @@
 // a squad that follows your orders. Cannons can be manned by the player.
 import * as THREE from 'three';
 import { material } from '../props/palette';
-import { ROADS } from '../world/layout';
+import { ROADS, riverX } from '../world/layout';
 import { RAPIER, groups, G_STATIC, G_PROP, ALL, v3 } from '../physics/physics';
 import type { Game } from '../game';
 import { NPC } from '../npc/npc';
@@ -14,6 +14,8 @@ import { GeoBuilder } from '../build/geom';
 import { meshesFrom } from '../props/palette';
 import type { Action, Interactable } from '../player/interact';
 import type { Seat } from '../player/player';
+import type { Animal } from '../creature/animals';
+import { Fronts } from './front';
 
 type Side = 'vanguardia' | 'ironreach';
 let SID = 1;
@@ -25,6 +27,12 @@ export class Soldier extends NPC {
   /** part of a column on the march (keeps its road path instead of the camp AI) */
   marching = false;
   standard = false;
+  /** in a pitched battle: its place in the line, and what the line is doing */
+  battle: { slot: THREE.Vector3; face: number; phase: 'form' | 'advance' | 'charge'; enemy: THREE.Vector3; id: number } | null = null;
+  /** running flat out (charging, fleeing, catching up with the column) */
+  sprint = false;
+  /** cavalry: the horse under this soldier */
+  horse: Animal | null = null;
   constructor(game: Game, side: Side, pos: THREE.Vector3) {
     const person: Person = {
       id: 'soldier-' + SID++, name: side === 'vanguardia' ? ['Sir Aldo', 'Pikeman Bram', 'Archer Joss', 'Sergeant Wynne', 'Footman Cael', 'Hal of Millbrook'][SID % 6] : ['Varr Grunt', 'Iron Bjorn', 'Kael Ashhand', 'Ulf the Grim', 'Dagny', 'Thorvald'][SID % 6],
@@ -68,7 +76,8 @@ export class War {
   waveT = 30;
   battles = { vanguardia: 0, ironreach: 0 };
   group = new THREE.Group();
-  constructor(public game: Game) { game.scene.add(this.group); }
+  fronts: Fronts;
+  constructor(public game: Game) { game.scene.add(this.group); this.fronts = new Fronts(game, this); }
 
   /** Marching routes: roads that end at a bridge, oriented toward the river, per side. */
   routes: { side: Side; pts: THREE.Vector3[] }[] = [];
@@ -102,6 +111,18 @@ export class War {
     const s = new Soldier(this.game, side, pos.clone().setY(this.game.world.heightAt(pos.x, pos.z)));
     this.game.physics.owners.set(s.collider.handle, { kind: 'soldier', soldier: s, npc: s });
     this.soldiers.push(s);
+    return s;
+  }
+  /** A mounted soldier: a horse with a rider in armour (lance and sword), who charges at a gallop. */
+  spawnCavalry(side: Side, pos: THREE.Vector3) {
+    const g = this.game;
+    const s = this.spawnSoldier(side, pos);
+    const horse = g.spawnAnimal('horse', pos.clone().add(new THREE.Vector3(0.5, 0, 0)));
+    s.horse = horse;
+    horse.mode = 'cavalry';
+    horse.owner = side;
+    horse.npcRider = s.collider.handle;
+    s.collider.setCollisionGroups(groups(16, ALL & ~16));   // the rider rides; the horse does the colliding
     return s;
   }
   /** A column of soldiers marching down a road to the war, in ranks behind a standard-bearer. */
@@ -150,6 +171,7 @@ export class War {
   build() {
     const g = this.game;
     this.buildRoutes();
+    this.fronts.build();
     for (const b of g.world.bridges) {
       const ax = Math.cos(b.yaw), az = -Math.sin(b.yaw);
       for (const [side, sgn] of [['vanguardia', -1], ['ironreach', 1]] as [Side, number][]) {
@@ -247,7 +269,7 @@ export class War {
     this.game.hud.toast(`You have enlisted with ${side === 'vanguardia' ? 'Vanguardia' : 'Ironreach'}. Find the camp by the bridges.`);
   }
   status() {
-    return `Vanguardia holds ${this.battles.vanguardia} skirmish victories, Ironreach ${this.battles.ironreach}. ${this.enlisted ? `You fight for ${this.enlisted === 'vanguardia' ? 'Vanguardia' : 'Ironreach'}.` : 'You are not sworn to either crown.'}`;
+    return `${this.fronts.fronts.map((f) => this.fronts.status(f)).join('. ')}. Battles won: Vanguardia ${this.battles.vanguardia}, Ironreach ${this.battles.ironreach}. ${this.enlisted ? `You fight for ${this.enlisted === 'vanguardia' ? 'Vanguardia' : 'Ironreach'}.` : 'You are not sworn to either crown.'}`;
   }
   rumour(k: Kingdom) {
     const lines = [
@@ -325,16 +347,9 @@ export class War {
     // skirmish waves near the player
     const nearCamp = this.camps.filter((c) => c.pos.distanceTo(p) < 700);
     this.waveT -= dt;
+    this.fronts.update(dt);
     if (nearCamp.length && this.waveT <= 0 && this.soldiers.filter((s) => s.alive).length < 50) {
       this.waveT = 70 + Math.random() * 60;
-      const br = nearCamp[0].bridge;
-      for (const c of this.camps.filter((k) => k.bridge === br)) for (let i = 0; i < 4; i++) {
-        const sp = c.pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 8, 0, (Math.random() - 0.5) * 8));
-        sp.y = g.world.heightAt(sp.x, sp.z);
-        const s = new Soldier(g, c.side, sp);
-        g.physics.owners.set(s.collider.handle, { kind: 'soldier', soldier: s, npc: s });
-        this.soldiers.push(s);
-      }
       // enlisted players get a squad of their own
       if (this.enlisted && !this.soldiers.some((s) => s.squad && s.alive)) {
         for (let i = 0; i < 4; i++) {
@@ -354,11 +369,14 @@ export class War {
       let best: Soldier | null = null, bd = s.squad && s.order === 'follow' ? 18 : 60;
       for (const e of enemies) { const d = e.st.pos.distanceTo(s.st.pos); if (d < bd) { bd = d; best = e; } }
       if (s.order === 'hold' && best && bd > 8) best = null;
+      if (s.battle && s.battle.phase !== 'charge' && bd > 14) best = null;
+      // never charge straight at a foe across the river: the line routes over the bridge instead
+      if (best && bd > 6 && Math.sign(best.st.pos.x - riverX(best.st.pos.z)) !== Math.sign(s.st.pos.x - riverX(s.st.pos.z)) && !g.world.bridges.some((b) => Math.hypot(s.st.pos.x - b.x, s.st.pos.z - b.z) < b.len / 2 + 4)) best = null;
       if (s.marching) { if (best && bd < 25) s.marching = false; else best = null; if (s.marching && !s.path.length) s.marching = false; }
       s.fightTarget = best;
       // enemies of the player's side fight the player too
       s.hostile = !!this.enlisted && this.enlisted !== s.side && s.st.pos.distanceTo(p) < 25;
-      if (!best && !s.hostile && !s.marching) {
+      if (!best && !s.hostile && !s.marching && !s.battle) {
         if (s.squad && (s.order === 'follow' || s.order === 'line')) {
           const idx = this.soldiers.filter((x) => x.squad).indexOf(s);
           const right = new THREE.Vector3(Math.cos(g.player.yaw), 0, -Math.sin(g.player.yaw));
@@ -374,11 +392,11 @@ export class War {
     // bodies are cleaned up after a while; victories counted per bridge
     for (let i = this.soldiers.length - 1; i >= 0; i--) {
       const s = this.soldiers[i];
-      if (!s.alive) { (s as Soldier & { deadT?: number }).deadT = ((s as Soldier & { deadT?: number }).deadT ?? 0) + dt; if ((s as Soldier & { deadT?: number }).deadT! > 120) { s.dispose(); this.soldiers.splice(i, 1); } }
-      else if (s.st.pos.distanceTo(p) > 1000) { s.dispose(); this.soldiers.splice(i, 1); }
+      const drop = () => { if (s.horse) { const h = s.horse; s.horse = null; const k = g.fauna.extra.indexOf(h); if (k >= 0) g.fauna.extra.splice(k, 1); h.dispose(); } s.dispose(); this.soldiers.splice(i, 1); };
+      if (!s.alive) { (s as Soldier & { deadT?: number }).deadT = ((s as Soldier & { deadT?: number }).deadT ?? 0) + dt; if ((s as Soldier & { deadT?: number }).deadT! > 120) drop(); }
+      else if (s.st.pos.distanceTo(p) > 1000 && !this.fronts.fronts.some((f) => f.live?.ids.has(s))) drop();
     }
-    const alive = (side: Side) => this.soldiers.some((s) => s.alive && s.side === side && !s.squad);
-    if (this.soldiers.length && !alive('vanguardia') && alive('ironreach')) { this.battles.ironreach++; this.waveT = Math.min(this.waveT, 40); }
+
   }
   step(dt: number) { for (const s of this.soldiers) s.step(dt); }
   animate(dt: number) {

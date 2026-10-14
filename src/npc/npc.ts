@@ -28,7 +28,7 @@ export class NPC {
   body: RAPIER.RigidBody;
   collider: RAPIER.Collider;
   kcc: RAPIER.KinematicCharacterController;
-  st: MoveState & { carry?: boolean; eating?: boolean; sitting?: boolean; blocking?: boolean; armed?: boolean };
+  st: MoveState & { carry?: boolean; eating?: boolean; sitting?: boolean; blocking?: boolean; armed?: boolean; riding?: boolean };
   path: THREE.Vector3[] = [];
   activity: Activity = 'home';
   target: THREE.Vector3 | null = null;
@@ -175,7 +175,7 @@ export class NPC {
       speed = d > 2.2 ? 4.2 * (1 - this.anim.limp * 0.6) : 0;
       this.attackT -= dt;
       st.blocking = d < 3 && Math.random() < 0.01 ? true : st.blocking && Math.random() > 0.02;
-      if (d < 2.4 && this.attackT <= 0) {
+      if (d < ((this as unknown as { horse?: unknown }).horse ? 3.4 : 2.4) && this.attackT <= 0) {
         this.attackT = 1.2 + Math.random() * 0.8;
         const dirs = ['left', 'right', 'over', 'thrust'] as const;
         this.anim.attack(dirs[Math.floor(Math.random() * 4)]);
@@ -209,11 +209,28 @@ export class NPC {
         goal = this.path[0];
         const d = Math.hypot(goal.x - st.pos.x, goal.z - st.pos.z);
         if (d < (this.path.length === 1 ? 0.7 : 0.45)) { this.path.shift(); goal = this.path[0] ?? null; }
-        speed = this.activity === 'shelter' ? 3.2 : (this as { marching?: boolean }).marching ? 1.6 : 1.35;
+        const bt = (this as { battle?: { phase: string } | null }).battle;
+        speed = this.activity === 'shelter' ? 3.2 : bt?.phase === 'advance' ? 2.1 : (this as { marching?: boolean }).marching ? 1.6 : 1.35;
       } else if (this.waitT > 0) this.waitT -= dt;
       st.action = this.activity === 'sleep' ? 'sleep' : 'idle';
       // look at the player when they are close and staring
       if (st.pos.distanceTo(p.pos) < 4 && this.activity !== 'sleep') st.look = p.eyePos();
+    }
+    // soldiers run when they charge or must catch up
+    const me = this as unknown as { sprint?: boolean; horse?: import('../creature/animals').Animal | null };
+    if (me.sprint && speed > 0) speed = Math.max(speed, 5.6 * (1 - this.anim.limp * 0.6));
+    // mounted: the horse carries us toward the goal; we sit in the saddle (and strike from it)
+    if (me.horse) {
+      const h = me.horse;
+      if (h.mode === 'dead' || !this.alive) { me.horse = null; h.mode = 'flee'; h.npcRider = null; this.st.riding = false; return; }
+      h.cav = { target: goal ? goal.clone() : h.st.pos.clone(), speed: goal ? (me.sprint || (this.hostile || this.fightTarget) ? 11 : speed > 2 ? 6 : 2.2) : 0 };
+      const sp = new THREE.Vector3(), q = new THREE.Quaternion();
+      h.getTransform(sp, q);
+      sp.y += 0.85 - 0.95;
+      st.pos.copy(sp); st.yaw = h.st.yaw; st.speed = 0; st.riding = true;
+      this.body.setNextKinematicTranslation({ x: sp.x, y: sp.y + 0.9, z: sp.z });
+      st.vel.copy(h.st.vel);
+      return;
     }
     // open doors in the way
     if (goal && this.doorCooldown <= 0) { g.residents.openDoorsNear(st.pos, goal); this.doorCooldown = 0.25; }

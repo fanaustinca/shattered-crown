@@ -137,6 +137,8 @@ export class Audio {
       case 'shout': this.tone(o, 220, 180, 0.4, 'sawtooth', 0.08); this.burst(o, 0.4, 'bandpass', 800, 2, 0.02, 0.3); break;
       case 'coins': for (let i = 0; i < 5; i++) this.tone(o, 3000 + Math.random() * 2000, 2800, 0.12, 'sine', 0.08, i * 0.04); break;
       case 'sail': this.burst(o, 0.8, 'lowpass', 400, 0.8, 0.1, 0.6); break;
+      case 'horn': for (const [f, d] of [[147, 0], [147, 0.9], [196, 1.5]]) { this.tone(o, f, f * 0.99, d === 1.5 ? 1.6 : 0.7, 'sawtooth', 0.09, d); this.tone(o, f * 2, f * 2, d === 1.5 ? 1.6 : 0.7, 'sine', 0.05, d); } break;
+      case 'drums': for (let i = 0; i < 8; i++) this.tone(o, 90, 55, 0.35, 'sine', i % 4 === 0 ? 0.5 : 0.3, i * 0.42); break;
       case 'creak_ship': this.tone(o, 80 + Math.random() * 40, 120, 0.9, 'sawtooth', 0.03); break;
     }
   }
