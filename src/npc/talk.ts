@@ -44,6 +44,56 @@ const GOSSIP = [
   (n: string) => `${n} found a silver coin of the old kings in their garden. Now they dig every evening.`,
 ];
 
+interface Follow { q: string; a: string[] | ((n: NPC, t: Talk) => string); next?: string; like?: number; when?: (n: NPC, t: Talk) => boolean }
+const gruffy = (n: NPC) => n.person.temperament > 0.65;
+/** Follow-up questions per subject, in the order a real conversation drifts. */
+const FOLLOW: Record<string, Follow[]> = {
+  war: [
+    { q: 'Have you lost anyone to it?', a: (n) => gruffy(n) ? 'My brother. At the North Span. Don\'t ask me again.' : pick(['A cousin. Took an arrow at the bridge and never came home.', 'Not yet. Every knock at the door, I think: is this it?', 'My neighbour\'s two boys. Both of them, same day.']), next: 'grief' },
+    { q: 'Is the town ready if they come?', a: ['The walls are thick, but walls need men on them. Half the garrison\'s at the river.', 'They\'d close the gates and man the walls. Archers up top, pikes at the gate. We\'ve drilled it.', 'Ready? The captain spends more time in the tavern than on the walls.'], next: 'defence' },
+    { q: 'Do soldiers pass through here often?', a: ['Every few days a column marches down the road, drums and all. They eat everything and pay for half.', 'Often enough that the inn waters the ale twice over.'] },
+    { q: 'What would peace look like?', a: ['Trade over the bridges again. Salt and iron from the mountains, wool and grain from us. Everyone fatter.', 'Peace? I\'ve forgotten. Quiet, I suppose. Sleeping through the night.'] },
+    { q: 'Would you ever leave, to get away from it?', a: (n) => n.person.age > 50 ? 'At my age? I\'ll die where I was born.' : pick(['To the isles, maybe. If I had the passage money.', 'And go where? The war\'s everywhere.']) },
+  ],
+  defence: [
+    { q: 'Where would they attack?', a: ['The gates. Always the gates. That\'s why they keep the portcullis greased.', 'Wherever the wall is weakest. The old stretch by the river, I\'d wager.'] },
+    { q: 'Could cannon bring the walls down?', a: ['Ironreach guns can crack anything given time. I\'ve seen a tower come down at Blackcrag.', 'They say the walls were built before cannon. They weren\'t built for it.'] },
+    { q: 'Would you fight?', a: (n) => gruffy(n) ? 'With my bare hands if I had to.' : 'I\'d carry water to the walls and pray. That\'s fighting enough for me.', like: 0.05 },
+  ],
+  grief: [
+    { q: 'I\'m sorry for your loss.', a: ['…Thank you. Not many say it any more.', 'It\'s the same story in every house. But thank you.'], like: 0.15, next: 'warm' },
+    { q: 'Do you blame the crown?', a: ['Who else? The lords want the river; we pay for it in sons.', 'I blame the other side. That\'s easier.'] },
+  ],
+  place: [
+    { q: 'What\'s the best place to eat?', a: ['The tavern does a mutton stew that\'ll put hair on your chest.', 'My kitchen. But you\'re not invited.'] },
+    { q: 'Is it safe on the roads?', a: ['By day, mostly. By night there are deserters in the woods, and worse.', 'Safe as the war lets anything be. Ride with company.'] },
+    { q: 'How long have you lived here?', a: (n) => n.person.age > 50 ? 'Since before your mother was born.' : 'All my life. Never seen much else.', next: 'life' },
+    { q: 'Who should I avoid?', a: (n, t) => { const town = t.game.towns.byBuilding.get(n.person.home)?.site; const q = t.game.towns.people.find((x) => g0(t).towns.byBuilding.get(x.home)?.site === town && x.temperament > 0.75 && x.id !== n.person.id); return q ? `${q.name.split(' ')[0]}. Short temper and a long memory.` : 'The tax collector. Everyone avoids the tax collector.'; } },
+  ],
+  life: [
+    { q: 'Are you happy here?', a: (n) => n.person.temperament > 0.65 ? 'Happy? Nobody asked me if I wanted to be happy.' : pick(['Mostly. The bread\'s good and the neighbours mostly kind.', 'I was, before the war.']) },
+    { q: 'What do you do when you\'re not working?', a: ['Dice at the tavern. I lose, mostly.', 'Sleep. What else is there?', 'I carve little animals out of offcuts. Silly, I know.', 'Walk by the river and watch the boats.'], next: 'warm' },
+    { q: 'What do you dream of?', a: ['A house of my own, with a proper chimney.', 'Seeing the sea. Just once.', 'Peace. Plain old peace.'], like: 0.05 },
+  ],
+  gossip: [
+    { q: 'How do you know all this?', a: ['I keep my ears open and my mouth… well, half shut.', 'Washing day at the well. Nothing stays secret at the well.'] },
+    { q: 'Is anyone up to no good?', a: (n, t) => t.game.law.log.length ? 'There\'s a thief about. The watch has posters up at the gate.' : pick(['Smugglers bring iron over the river at night. Everyone knows, nobody says.', 'The miller\'s scales are light. Weigh your flour twice.']) },
+    { q: 'What do people say about me?', a: (n, t) => t.mem(n).liking > 0.4 ? 'That you\'re all right. For a stranger.' : t.game.law.log.length ? 'That you\'ve light fingers. True?' : 'Nobody knows who you are. That\'s what they say.' },
+  ],
+  warm: [
+    { q: 'Tell me about yourself.', a: (n) => `I\'m ${n.person.name.split(' ')[0]}. ${n.person.age > 50 ? 'Old and stubborn.' : 'Not much to tell, really.'}`, next: 'life' },
+    { q: 'You must be well liked here.', a: ['Ha! Ask my neighbours. Actually, don\'t.', 'I try to be decent. Most days.'] },
+    { q: 'Would you share a drink with me sometime?', a: (n, t) => t.mem(n).liking > 0.45 ? pick(['I\'d like that. The tavern, after dark?', 'Why not? You\'re buying.']) : 'Let\'s not get ahead of ourselves.', like: 0.05, when: (n) => n.person.role !== 'child' },
+    { q: 'Any advice for a traveller?', a: ['Keep your purse inside your shirt and your blade where you can reach it.', 'Don\'t cross the river without papers. Or a very fast horse.', 'Eat when you can, sleep where you can, and never trust a ferryman who smiles.'] },
+  ],
+  banter: [
+    { q: 'Heard any good jokes?', a: ['What\'s the difference between an Ironreach captain and a mule? The mule knows when to stop.', 'A knight, a priest and a pig walk into the tavern. Only the pig pays.'] },
+    { q: 'To your health!', when: (n) => n.person.role !== 'child', a: ['And yours! May the war forget us both.', 'Health and full bellies!'], like: 0.05, next: 'warm' },
+    { q: 'You\'re not so bad yourself.', a: ['Careful, I\'ll start thinking you mean it.'], like: 0.05, next: 'warm' },
+  ],
+};
+const g0 = (t: Talk) => t.game;
+
 export class Talk {
   memory = new Map<string, Memory>();
   /** live NPC-NPC chats */
@@ -76,6 +126,14 @@ export class Talk {
     else if (m.met > 0) greet = m.liking > 0.5 ? pick([`${this.playerName()}! Good to see you again.`, 'Back again, friend? Come, sit a while.']) : m.liking < -0.2 ? pick(['You again.', 'What now?']) : pick(['Hello again.', 'Ah — you were here before.']);
     else if (night) greet = gruff ? 'It\'s the middle of the night. What?' : 'It\'s late, stranger. What do you want?';
     else greet = this.firstGreeting(n);
+    // they notice what you're doing: a drawn blade, blood, their own things in your hands, the weather
+    const pl = g.player, held = g.interaction.held;
+    if (!n.hostile) {
+      if (g.combat.drawn) greet = (p.role === 'guard' ? 'Sheathe that blade in my town. Now. ' : gruff ? 'Put that steel away before you talk to me. ' : 'P-please, put the sword away… ') + greet;
+      else if (pl.bleeding > 0.05) greet = pick(['Gods, you\'re bleeding! Bind that before you fall down. ', 'You\'re hurt — there\'s blood all down you. ']) + greet;
+      else if (held?.owner && held.owner === p.home) greet = 'That\'s ours you\'re holding. ' + greet;
+      else if (g.weather.cur.rain > 0.4 && !night) greet = pick(['Filthy weather. ', 'Wet enough for you? ']) + greet;
+    }
     m.met++;
     return this.root(n, greet);
   }
@@ -132,8 +190,8 @@ export class Talk {
     if (p.role === 'merchant' || p.role === 'innkeeper' || p.role === 'blacksmith') o.push({ label: 'Let\'s trade.', go: () => { g.ui.openTrade(n); return null; } });
     if (p.role === 'guard' && g.law.bountyIn(k as Kingdom) > 0) o.push({ label: `Pay my fine (${g.law.bountyIn(k as Kingdom)} pennies)`, go: () => { g.law.payFine(n); return back(g.law.bountyIn(k as Kingdom) > 0 ? 'You can\'t cover it. Then you\'ll work it off in the cells — unless you run.' : 'Paid in full. Keep your nose clean.'); } });
     if (p.role === 'guard') o.push({ label: 'I want to fight for this kingdom.', go: () => { g.war.enlist(k as never); return back('Report to the sergeant at the bridge camp. Bring a blade, and say your prayers.'); } });
-    o.push({ label: m.liking < 0 ? 'I meant no offence. (Apologise)' : 'You have a kind face. (Compliment)', go: () => { const before = m.liking; m.liking = Math.min(1, m.liking + (m.asked.has('flatter') ? 0.03 : 0.2)); m.asked.add('flatter'); return back(before < 0 ? 'Hm. Apology accepted, I suppose.' : p.temperament > 0.65 ? 'Flattery won\'t get you far with me. …But thank you.' : 'Oh! Well. That\'s kind of you to say.'); } });
-    o.push({ label: 'Out of my way, peasant. (Insult)', go: () => { m.liking -= 0.5; if (p.temperament > 0.75 && p.role !== 'child') { n.hostile = true; n.say('Right. You asked for it!', true); return null; } return back(p.role === 'guard' ? 'Watch your tongue, or I\'ll watch it for you from inside a cell.' : pick(['How dare you!', 'Charming. Leave me be.', 'Go boil your head.'])); } });
+    o.push({ label: m.liking < 0 ? 'I meant no offence. (Apologise)' : 'You have a kind face. (Compliment)', go: () => this.compliment(n) });
+    o.push({ label: 'Out of my way, peasant. (Insult)', go: () => this.insult(n) });
     o.push({ label: 'Farewell.', go: () => null });
     return { line, options: o };
   }
@@ -189,8 +247,8 @@ export class Talk {
     const town = g.towns.byBuilding.get(p.home)?.site ?? 'these parts';
     const tName = g.towns.plans.find((pl) => pl.site.id === town)?.site.name ?? town;
     const role = p.role === 'spouse' ? 'I keep house' : p.role === 'child' ? 'I\'m nearly grown' : `I'm the ${p.role}`;
+    const back = (l: string) => this.follow(n, l, 'life');
     const line = `${p.name}. ${role} here in ${tName}. ${p.age > 55 ? 'Seen more winters than I care to count.' : p.age < 25 ? 'Born and raised, never been further than the river.' : 'Lived here most of my life.'}`;
-    const back = (l: string) => this.root(n, l);
     return { line, options: [
       { label: 'What\'s your work like?', go: () => ({ line: pick(WORK[p.role] ?? WORK.laborer), options: [
         { label: 'Does it pay well?', go: () => back(p.role === 'merchant' || p.role === 'lord' ? 'Well enough. Better than most.' : 'Pay? Ha. Enough for bread and a roof, some weeks.') },
@@ -217,7 +275,7 @@ export class Talk {
 
   private war(n: NPC): DNode {
     const g = this.game, k = kingdomAt(n.st.pos.x, n.st.pos.z) as Kingdom;
-    const back = (l: string) => this.root(n, l);
+    const back = (l: string) => this.follow(n, l, 'war');
     const near = g.war.soldiers.filter((s) => s.alive && s.st.pos.distanceTo(n.st.pos) < 600).length;
     return { line: g.war.rumour(k), options: [
       { label: 'Who\'s winning?', go: () => back(g.war.battles.vanguardia === g.war.battles.ironreach ? 'Nobody. That\'s the trouble with this war: everybody loses a bit, every day.' : `${g.war.battles.vanguardia > g.war.battles.ironreach ? 'Vanguardia' : 'Ironreach'} has the upper hand, they say. For now.`) },
@@ -230,7 +288,7 @@ export class Talk {
 
   private place(n: NPC): DNode {
     const g = this.game, s = nearestSite(n.st.pos.x, n.st.pos.z).site, k = kingdomAt(n.st.pos.x, n.st.pos.z);
-    const back = (l: string) => this.root(n, l);
+    const back = (l: string) => this.follow(n, l, 'place');
     const desc = s.kind === 'capital' ? `${s.name}, the crown city of ${KNAME[s.kingdom]}. Biggest walls you'll ever see.` : s.kind === 'castle' ? `${s.name}. The garrison keeps the road safe — mostly.` : s.kind === 'port' ? `${s.name}. Ships, fish and sailors' songs.` : `${s.name}. Small, but we look after our own.`;
     const w = g.weather;
     return { line: `This is ${desc}`, options: [
@@ -249,12 +307,13 @@ export class Talk {
     const town = g.towns.byBuilding.get(n.person.home)?.site;
     const neighbours = g.towns.people.filter((x) => x.id !== n.person.id && g.towns.byBuilding.get(x.home)?.site === town && x.role !== 'child');
     const who = neighbours.length ? pick(neighbours).name.split(' ')[0] : 'the miller';
+    const back2 = (l: string) => this.follow(n, l, 'gossip');
     const crimes = g.law.log.slice(-3);
     const line = crimes.length && Math.random() < 0.5 ? `Someone's been ${crimes[crimes.length - 1].crime === 'theft' ? 'stealing' : 'making trouble'} around ${crimes[crimes.length - 1].where}. The guards are asking questions.` : pick(GOSSIP)(who);
     return { line, options: [
-      { label: 'Tell me more.', go: () => back(pick(['That\'s all I know. And you didn\'t hear it from me.', 'Ask at the tavern. Ale loosens tongues.', 'I\'ve said too much already.'])) },
+      { label: 'Tell me more.', go: () => back2(pick(['That\'s all I know. And you didn\'t hear it from me.', 'Ask at the tavern. Ale loosens tongues.', 'I\'ve said too much already.'])) },
       { label: 'Anything else?', go: () => this.gossip(n) },
-      { label: 'You shouldn\'t spread rumours.', go: () => { m.liking -= 0.1; return back('Hmph. Everybody does.'); } },
+      { label: 'You shouldn\'t spread rumours.', go: () => { m.liking -= 0.1; return back2('Hmph. Everybody does.'); } },
       { label: 'Let\'s talk about something else.', go: () => back('Suit yourself.') },
     ] };
   }
@@ -286,6 +345,75 @@ export class Talk {
     const ang = Math.atan2(dx, -dz);
     const dirs = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
     return `${Math.round(Math.hypot(dx, dz))} paces to the ${dirs[Math.round(((ang + Math.PI * 2) % (Math.PI * 2)) / (Math.PI / 4)) % 8]}`;
+  }
+
+  // ------------------------------------------------------------------ the drift of a conversation
+  /** After an answer, the natural next questions on the same subject (ones not yet asked), plus a way to
+   *  change the subject or leave — so the choices move with the conversation instead of resetting. */
+  follow(n: NPC, line: string, topic: string): DNode {
+    const m = this.mem(n);
+    const pool = (FOLLOW[topic] ?? []).filter((f) => !m.asked.has(topic + ':' + f.q) && (!f.when || f.when(n, this)));
+    const opts: DOption[] = [];
+    for (const f of pool.sort(() => Math.random() - 0.5).slice(0, 3)) opts.push({ label: f.q, go: () => {
+      m.asked.add(topic + ':' + f.q);
+      if (f.like) m.liking = THREE.MathUtils.clamp(m.liking + f.like, -1, 1);
+      const ans = typeof f.a === 'function' ? f.a(n, this) : pick(f.a);
+      return this.follow(n, ans, f.next ?? topic);
+    } });
+    opts.push({ label: 'Let\'s talk about something else.', go: () => this.root(n, pick(['Very well.', 'As you like.', 'Hm. What else, then?', 'Go on.'])) });
+    opts.push({ label: 'Farewell.', go: () => null });
+    return { line, options: opts };
+  }
+
+  /** Rudeness has consequences, and you can make it worse or try to mend it. */
+  private insult(n: NPC): DNode {
+    const p = n.person, m = this.mem(n), gruff = p.temperament > 0.65;
+    m.liking -= 0.4;
+    m.asked.add('insulted');
+    if (p.temperament > 0.82 && p.role !== 'child') { n.hostile = true; n.say('Right. You asked for it!', true); return { line: 'Right. You asked for it!', options: [{ label: '(Defend yourself)', go: () => null }] }; }
+    const line = p.role === 'guard' ? 'Watch your tongue, or I\'ll watch it for you from inside a cell.' : p.role === 'child' ? 'I\'m telling my mam on you!' : gruff ? pick(['Say that again. I dare you.', 'You want a fist in your teeth?']) : pick(['How dare you!', 'Charming. Leave me be.', 'Go boil your head.']);
+    return { line, options: [
+      { label: 'I meant every word.', go: () => {
+        m.liking -= 0.3;
+        if (gruff && p.role !== 'child') { n.hostile = true; n.say('Then you\'ll answer for it!', true); return null; }
+        if (p.role === 'guard') { this.game.law.crime('assault', n.st.pos, p.home, 0.05, false); return { line: 'That\'ll be a fine, then. Keep it up and it\'ll be the stocks.', options: [{ label: 'Fine. I\'m going.', go: () => null }, { label: 'Sorry, officer. Long day.', go: () => this.apologise(n) }] }; }
+        return { line: pick(['Get away from me, or I\'ll call the watch!', 'I won\'t be spoken to like that. Leave.']), options: [{ label: '(Leave)', go: () => null }, { label: 'Wait — I\'m sorry. I shouldn\'t have said that.', go: () => this.apologise(n) }] };
+      } },
+      { label: 'Forgive me. The road has made me sour.', go: () => this.apologise(n) },
+      { label: 'Ha! Only jesting, friend.', go: () => {
+        const humour = 1 - p.temperament + Math.random() * 0.4;
+        if (humour > 0.75) { m.liking += 0.35; return this.follow(n, pick(['Ha! You had me there. You\'ve a wicked tongue, traveller.', 'Hah. Funny. Very funny.']), 'banter'); }
+        return { line: 'Strange sense of humour you have.', options: [{ label: 'Let me make it up to you.', go: () => this.apologise(n) }, { label: 'Suit yourself.', go: () => null }] };
+      } },
+      { label: 'What are you going to do about it?', go: () => {
+        m.liking -= 0.3;
+        if (p.role === 'guard' || gruff) { n.hostile = true; n.say(p.role === 'guard' ? 'Resisting the watch, are we?' : 'This!', true); return null; }
+        n.activity = 'flee'; n.say(pick(['Guards! Guards!', 'Help! A madman!']), true);
+        return null;
+      } },
+    ] };
+  }
+  private apologise(n: NPC): DNode {
+    const p = n.person, m = this.mem(n), g = this.game;
+    m.liking = Math.min(m.liking + 0.25, 0.2);
+    return { line: p.temperament > 0.65 ? 'Hmph. Words are cheap.' : 'Well… we all have our days, I suppose.', options: [
+      { label: 'Let me buy you a drink. (2 pennies)', go: () => {
+        if (g.interaction.money < 2) return { line: 'With what? Your empty purse?', options: [{ label: 'Fair point.', go: () => this.root(n, 'Hm.') }] };
+        g.interaction.money -= 2; m.liking += 0.35;
+        return this.follow(n, 'Well. That\'s more like it. I\'ll drink to your health.', 'banter');
+      } },
+      { label: 'Can we start again?', go: () => this.root(n, p.temperament > 0.65 ? 'Fine. Once.' : 'Of course. Hello, then.') },
+      { label: 'I\'ll leave you be.', go: () => null },
+    ] };
+  }
+  private compliment(n: NPC): DNode {
+    const p = n.person, m = this.mem(n);
+    if (m.liking < 0) return this.apologise(n);
+    const first = !m.asked.has('flatter');
+    m.asked.add('flatter');
+    m.liking = Math.min(1, m.liking + (first ? 0.2 : 0.03));
+    const line = !first ? 'You\'ve said that already. Are you after something?' : p.temperament > 0.65 ? 'Flattery won\'t get you far with me. …But thank you.' : p.role === 'child' ? 'Really? Mam says I look like a turnip.' : 'Oh! Well. That\'s kind of you to say.';
+    return this.follow(n, line, 'warm');
   }
 
   private errand(n: NPC): DNode {

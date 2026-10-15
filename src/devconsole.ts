@@ -87,6 +87,23 @@ export function installDevConsole(game: Game) {
       return say(`A ${cls === 'manowar' ? "man-o'-war" : cls} is waiting at ${Math.round(w.distanceTo(g.player.pos))} m.`);
     },
     boat: () => spawn.ship('boat'),
+    /** an enemy army marching on the nearest town gate */
+    siege: (n = 16) => {
+      const P = g.player.pos;
+      const gt = g.gates.gates.filter((x) => x.side).sort((a, b) => a.pos.distanceTo(P) - b.pos.distanceTo(P))[0];
+      if (!gt) return say('No walled town near.');
+      const foe = gt.side === 'vanguardia' ? 'ironreach' : 'vanguardia';
+      const out = gt.inward.clone().negate();
+      const across = new THREE.Vector3(-out.z, 0, out.x);
+      for (let i = 0; i < n; i++) {
+        const p = gt.pos.clone().addScaledVector(out, 120 + (i >> 2) * 3).addScaledVector(across, ((i % 4) - 1.5) * 2.5);
+        p.y = g.world.heightAt(p.x, p.z);
+        const s = g.war.spawnSoldier(foe, p);
+        s.marching = true; s.sprint = false;
+        s.path = [gt.pos.clone().addScaledVector(out, 4).addScaledVector(across, ((i % 4) - 1.5) * 1.2), gt.pos.clone().addScaledVector(gt.inward, 30)];
+      }
+      return say(`${n} ${foe} soldiers march on the gate of ${g.towns.plans.find((p) => p.site.id === gt.site)?.site.name}.`);
+    },
     brigantine: () => spawn.ship('brigantine'),
     frigate: () => spawn.ship('frigate'),
     manowar: () => spawn.ship('manowar'),
@@ -139,6 +156,7 @@ export function installDevConsole(game: Game) {
         ['spawn.cart()', 'a wagon (lead a horse to it and press X to hitch; up to 4)'],
         ['spawn.team(n)', 'a wagon with a team of 1–4 horses in harness'],
         ["spawn.ship('brigantine' | 'frigate' | 'manowar')", 'a warship on the nearest water deep enough for her'],
+        ['spawn.siege(n)', 'an enemy army marching on the nearest town gate'],
         ['spawn.boat()', 'a rowing boat'],
         ['spawn.fleet(side)', 'two opposing squadrons for a sea battle nearby'],
         ['spawn.army(side, n)', "soldiers ('vanguardia' | 'ironreach') formed up ahead"],

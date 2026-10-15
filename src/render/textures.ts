@@ -5,8 +5,34 @@ import * as THREE from 'three';
 export const ASSET = (p: string) => `${import.meta.env.BASE_URL}assets/${p}`;
 
 let decodeGL: WebGL2RenderingContext | null = null;
+// decoding (and the GPU read-back it needs) runs in a small pool of workers so streaming in new materials
+// never stalls a frame; the main-thread path is kept as a fallback
+let pool: Worker[] | null = null, poolOk = typeof OffscreenCanvas !== 'undefined' && typeof Worker !== 'undefined';
+let nextJob = 1;
+const pending = new Map<number, { res: (u: Uint8Array) => void; rej: (e: unknown) => void }>();
+function workers() {
+  if (pool) return pool;
+  pool = [];
+  for (let i = 0; i < 3; i++) {
+    const w = new Worker(new URL('./decode.worker.ts', import.meta.url), { type: 'module' });
+    w.onmessage = (e: MessageEvent<{ id: number; out?: Uint8Array; error?: string }>) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); if (e.data.out) p.res(e.data.out); else p.rej(e.data.error); };
+    w.onerror = () => { poolOk = false; };
+    pool.push(w);
+  }
+  return pool;
+}
 /** Decode an image to raw RGBA bytes without the premultiply round-trip a 2D canvas would apply. */
 export async function decodeRGBA(url: string, size: number): Promise<Uint8Array> {
+  if (poolOk) {
+    try {
+      const abs = new URL(url, location.href).href;
+      const id = nextJob++, ws = workers();
+      return await new Promise<Uint8Array>((res, rej) => { pending.set(id, { res, rej }); ws[id % ws.length].postMessage({ id, url: abs, size }); });
+    } catch { poolOk = false; }
+  }
+  return decodeMain(url, size);
+}
+async function decodeMain(url: string, size: number): Promise<Uint8Array> {
   const blob = await (await fetch(url)).blob();
   const bmp = await createImageBitmap(blob, { premultiplyAlpha: 'none', colorSpaceConversion: 'none', resizeWidth: size, resizeHeight: size, resizeQuality: 'high' });
   if (!decodeGL) {

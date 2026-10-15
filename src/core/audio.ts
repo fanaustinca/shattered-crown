@@ -125,6 +125,7 @@ export class Audio {
       case 'hit:flesh': this.burst(o, 0.12, 'lowpass', 400, 2, 0.001, 1); this.tone(o, 90, 60, 0.15, 'sine', 0.4); break;
       case 'hit:block': for (const f of [700, 1700]) this.tone(o, f, f * 0.97, 0.35, 'triangle', 0.2); this.burst(o, 0.06, 'highpass', 3000, 1, 0.001, 0.5); break;
       case 'cannon': this.burst(o, 2.2, 'lowpass', 300, 0.7, 0.002, 1.6, 60); this.tone(o, 60, 30, 1.2, 'sine', 1.2); this.burst(o, 0.3, 'highpass', 1500, 0.5, 0.001, 0.8); break;
+      case 'musket': this.burst(o, 0.9, 'lowpass', 900, 0.8, 0.001, 1.2, 180); this.burst(o, 0.12, 'highpass', 2500, 0.6, 0.0005, 1.0); this.tone(o, 110, 50, 0.35, 'sine', 0.5); break;
       case 'neigh': { this.tone(o, 900, 600, 0.6, 'sawtooth', 0.06); this.tone(o, 1200, 400, 1.0, 'sawtooth', 0.05, 0.2); break; }
       case 'moo': this.tone(o, 110, 95, 1.3, 'sawtooth', 0.14); this.tone(o, 220, 190, 1.3, 'sine', 0.08); break;
       case 'oink': for (let i = 0; i < 2; i++) { this.tone(o, 180, 120, 0.18, 'square', 0.06, i * 0.22); this.burst(o, 0.15, 'bandpass', 500, 3, 0.01, 0.4); } break;

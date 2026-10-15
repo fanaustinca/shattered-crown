@@ -41,6 +41,7 @@ import { Music } from './core/music';
 import { Talk } from './npc/talk';
 import { Naval } from './war/naval';
 import { TravelPosts } from './world/posts';
+import { Gates } from './war/gates';
 import { Destruction } from './war/destruct';
 import { ClothSystem } from './render/cloth';
 
@@ -144,6 +145,7 @@ export class Game {
   talk = new Talk(this);
   naval = new Naval(this);
   posts = new TravelPosts(this);
+  gates = new Gates(this);
   destruct = new Destruction(this);
   private clothDt = 0;
   cloth!: ClothSystem;
@@ -227,6 +229,7 @@ export class Game {
     this.settlements.buildStatic();
     this.destruct.adopt(this.settlements.wallSections);
     this.posts.build();
+    this.gates.build();
     // the kingdoms' banners stream from the towers
     for (const f of this.settlements.flags) {
       const pole = new THREE.Object3D();
@@ -466,6 +469,7 @@ export class Game {
     this.residents.step(aiDt);
     this.talk.update(aiDt);
     this.naval.update(aiDt);
+    this.gates.update(aiDt);
     this.destruct.update(aiDt);
     this.war.step(aiDt);
     this.mark('ai');

@@ -35,7 +35,7 @@ export interface TownPlan {
   /** the stable yard by the road outside town: where you hire horses and where fast travel arrives */
   stableYard?: { x: number; z: number; yaw: number; stable: string; arrive: [number, number] };
   /** small structures: water troughs, harbour cranes, lighthouses, cargo stacks, fish racks, quays */
-  extras: { kind: 'trough' | 'crane' | 'lighthouse' | 'cargo' | 'rack' | 'quay'; x: number; z: number; yaw: number; len?: number }[];
+  extras: { kind: 'trough' | 'crane' | 'lighthouse' | 'cargo' | 'rack' | 'quay' | 'windmill'; x: number; z: number; yaw: number; len?: number }[];
 }
 
 const FIRST_M = ['Aldric', 'Bran', 'Cedric', 'Dunstan', 'Edmund', 'Falk', 'Godric', 'Harold', 'Ivo', 'Jory', 'Kenric', 'Leofric', 'Merek', 'Nyle', 'Osric', 'Piers', 'Quill', 'Roderick', 'Simon', 'Tobias', 'Ulric', 'Wat', 'Wystan', 'Hugh', 'Gerald', 'Ansel', 'Brom', 'Corin', 'Daveth', 'Emeric'];
@@ -274,7 +274,7 @@ export class Towns {
       // a gate wherever a road reaches the wall, then a few more so no quarter is cut off
       const gates: number[] = roadGates(w, site, R * 0.97);
       if (!gates.length) gates.push(site.gateYaw ?? 0);
-      for (let k = 0; gates.length < 4 && k < 12; k++) {
+      for (let k = 0; gates.length < 5 && k < 12; k++) {
         // the widest stretch of wall without a gate gets one in its middle
         const sorted = [...gates].sort((a, b) => a - b);
         let gapA = 0, gapW = 0;
@@ -325,7 +325,9 @@ export class Towns {
     } else if (site.kind === 'castle') {
       // the castle gate faces the road that climbs to it
       const rg = roadGates(w, site, R * 0.84);
-      const gates = [rg.length ? rg[0] : site.gateYaw ?? 0];
+      // the main gate faces the road; a second gate (or more, one per road) on the far side
+      const gates = rg.length ? [...rg] : [site.gateYaw ?? 0];
+      if (gates.length < 2) gates.push(gates[0] + Math.PI + (r() - 0.5) * 0.6);
       const wp = organicRing(site, R * 0.84, 9 + Math.floor(r() * 4), gates, w, r, 0.17);
       wallR = (ang) => polyRadius(wp, site.x, site.z, ang);
       plan.walls = { site: site.id, pts: wp, r: R * 0.84, gates, height: 13, style: iron ? 'dark' : 'stone', center: [site.x, site.z] };
@@ -391,6 +393,21 @@ export class Towns {
     if (minor && this.hamletNext) this.hamlet(plan, add, r);
     else if (minor) this.homestead(plan, add, r);
     else this.enrich(plan, r, add, overlaps, okGround, placed);
+    // a windmill on the highest open ground at the edge of villages and hamlets where grain is grown
+    if ((site.kind === 'village' && !minor) || (minor && this.hamletNext)) {
+      if (r() < 0.65 && site.kingdom !== 'isles') {
+        let best: [number, number] | null = null, bh = -1e9;
+        for (let k = 0; k < 16; k++) {
+          const a = r() * Math.PI * 2, rad = (minor ? site.r : plan.siteR) * 0.9 + 15 + r() * 45;
+          const x = site.x + Math.cos(a) * rad, z = site.z + Math.sin(a) * rad;
+          const h = w.heightAt(x, z);
+          if (h < w.waterLevelAt(x, z) + 2 || w.slopeAt(x, z) > 0.12 || w.roadAt(x, z) > 0.05) continue;
+          if (plan.buildings.some((b) => Math.hypot(b.x - x, b.z - z) < 16)) continue;
+          if (h > bh) { bh = h; best = [x, z]; }
+        }
+        if (best) { w.levelRect(best[0], best[1], 7, 7, 0, w.heightAt(best[0], best[1]), 3); plan.extras.push({ kind: 'windmill', x: best[0], z: best[1], yaw: Math.atan2(best[0] - site.x, best[1] - site.z) + (r() - 0.5) }); }
+      }
+    }
     this.populate(plan, r);
     for (const b of plan.buildings) plan.siteR = Math.max(plan.siteR, Math.hypot(b.x - site.x, b.z - site.z) + 12);
     return plan;

@@ -33,6 +33,23 @@ export class Combat {
     if (!this.drawn || g.interaction.held || p.mode === 'seat' && !g.mount) { this.blocking = false; return; }
     const w = this.weapon!;
     this.mouseAcc.x = this.mouseAcc.x * 0.8 + inp.mouse.dx; this.mouseAcc.y = this.mouseAcc.y * 0.8 + inp.mouse.dy;
+    if (w.id === 'musket') {
+      // shoulder it (right button) to steady the aim; fire with the left; R to reload
+      this.bowDraw = inp.btn(2) ? Math.min(1, this.bowDraw + dt * 2) : Math.max(0, this.bowDraw - dt * 3);
+      if (this.musketReload > 0) {
+        this.musketReload -= dt;
+        if (this.musketReload <= 0) { this.musketLoaded = true; g.hud.toast('Loaded.'); }
+      } else if (inp.hit('KeyR') && !this.musketLoaded) {
+        const sh = g.interaction.pack.find('lead_shot');
+        if (!sh) g.hud.toast('No lead shot.');
+        else { g.interaction.pack.remove(sh, 1); this.musketReload = 12 * (1.4 - 0.4 * p.armSteadiness); g.hud.toast('Reloading: powder, wadding, ball, ramrod, prime the pan…'); }
+      }
+      if (inp.btnHit(0)) {
+        if (!this.musketLoaded) g.hud.toast(this.musketReload > 0 ? 'Still reloading…' : 'Not loaded — R to reload.');
+        else this.fireMusket();
+      }
+      return;
+    }
     if (w.id === 'bow') {
       if (inp.btn(2)) this.bowDraw = Math.min(1, this.bowDraw + dt * (0.9 * p.armSteadiness + 0.1));
       if (inp.btnUp(2) && this.bowDraw > 0.3 && g.interaction.pack.count('arrow')) this.loose();
@@ -48,6 +65,7 @@ export class Combat {
       this.swingT = 0; this.hitDone = false;
       p.stamina -= 6 + w.mass * 2;
       g.playerBody?.anim.attack(this.swingDir);
+      g.residents.alarm(p.pos, 6, true);
       g.sound?.('swing', p.pos, 0.5);
     }
     if (this.swingT >= 0) {
@@ -158,6 +176,24 @@ export class Combat {
     }, 300);
   }
 
+  musketLoaded = true;
+  musketReload = 0;
+  /** The pan flashes, a cloud of white smoke, and a lead ball at 300 m/s — accurate only when shouldered. */
+  fireMusket() {
+    const g = this.game, p = g.player;
+    this.musketLoaded = false;
+    const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(g.camera.quaternion);
+    const wob = 0.004 + (1 - this.bowDraw) * 0.035 + (1 - p.armSteadiness) * 0.04;
+    dir.x += (Math.random() - 0.5) * wob; dir.y += (Math.random() - 0.5) * wob; dir.z += (Math.random() - 0.5) * wob;
+    dir.normalize();
+    const muzzle = p.eyePos().addScaledVector(dir, 1.2);
+    this.shoot(muzzle, dir.clone().multiplyScalar(300), 95, true);
+    g.particles.emit('smoke', muzzle, 14); g.particles.emit('spark', muzzle, 10);
+    g.sound?.('musket', muzzle, 1.4);
+    g.residents.alarm(muzzle, 40);
+    // the kick
+    p.pitch = Math.min(1.4, p.pitch + 0.06); p.yaw += (Math.random() - 0.5) * 0.02;
+  }
   loose() {
     const g = this.game, p = g.player, ia = g.interaction;
     const ar = ia.pack.find('arrow');
@@ -173,9 +209,13 @@ export class Combat {
     this.bowDraw = 0;
     g.sound?.('swing', p.pos, 0.4);
   }
-  shoot(pos: THREE.Vector3, vel: THREE.Vector3, dmg: number, fromPlayer: boolean) {
+  private static arrowGeo = new THREE.CylinderGeometry(0.005, 0.005, 0.75, 5).rotateX(Math.PI / 2);
+  private static arrowMat = new THREE.MeshStandardMaterial({ color: 0x8a6a40 });
+  private static ballGeo = new THREE.SphereGeometry(0.009, 6, 4);
+  private static ballMat = new THREE.MeshStandardMaterial({ color: 0x55585c, metalness: 0.8, roughness: 0.4 });
+  shoot(pos: THREE.Vector3, vel: THREE.Vector3, dmg: number, fromPlayer: boolean, ball = vel.lengthSq() > 150 * 150) {
     const g = this.game;
-    const mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.005, 0.005, 0.75, 5).rotateX(Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x8a6a40 }));
+    const mesh = new THREE.Mesh(ball ? Combat.ballGeo : Combat.arrowGeo, ball ? Combat.ballMat : Combat.arrowMat);
     g.scene.add(mesh);
     this.arrows.push({ pos: pos.clone(), vel: vel.clone(), mesh, life: 12, dmg, fromPlayer });
   }

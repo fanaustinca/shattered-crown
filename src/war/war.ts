@@ -35,6 +35,8 @@ export class Soldier extends NPC {
   horse: Animal | null = null;
   /** an archer: holds back behind the line and looses volleys */
   archer = false;
+  /** a musketeer (an archer's place in the line, with a matchlock) */
+  musket = false;
   volleyT = 0;
   constructor(game: Game, side: Side, pos: THREE.Vector3) {
     const person: Person = {
@@ -79,6 +81,7 @@ export class War {
   balls: { body: RAPIER.RigidBody; mesh: THREE.Mesh; t: number; side: Side; byPlayer: boolean; ship?: unknown; prev?: THREE.Vector3 }[] = [];
   camps: { bridge: Bridge; side: Side; pos: THREE.Vector3 }[] = [];
   enlisted: Side | null = null;
+  private alarmT = 0;
   waveT = 30;
   battles = { vanguardia: 0, ironreach: 0 };
   group = new THREE.Group();
@@ -113,8 +116,8 @@ export class War {
     const top = new THREE.Object3D(); top.position.set(0, 1.55, 0); pole.add(top);
     this.game.cloth.banner(top, 0.9, 1.2, s.side === 'vanguardia' ? 0x22407a : 0x7a1612, s);
   }
-  spawnSoldier(side: Side, pos: THREE.Vector3) {
-    const s = new Soldier(this.game, side, pos.clone().setY(this.game.world.heightAt(pos.x, pos.z)));
+  spawnSoldier(side: Side, pos: THREE.Vector3, keepY = false) {
+    const s = new Soldier(this.game, side, keepY ? pos.clone() : pos.clone().setY(this.game.world.heightAt(pos.x, pos.z)));
     this.game.physics.owners.set(s.collider.handle, { kind: 'soldier', soldier: s, npc: s });
     this.soldiers.push(s);
     return s;
@@ -344,6 +347,7 @@ export class War {
         if (b.t < 12 && !onShip) {
           // walls take the blow (and crack, and fall); open ground gets a crater; kegs nearby go up
           g.destruct.impact(pos, 1, !water && pos.y - g.world.heightAt(pos.x, pos.z) < 1.2);
+          g.residents.alarm(pos, 60);
           for (const pr of g.props.props) if (pr.def.id === 'powder' && pr.obj.position.distanceTo(pos) < 1.6) g.destruct.detonate(pr);
           g.particles.emit(water ? 'splash' : 'dust', pos, water ? 40 : 30);
           if (!water) { g.particles.emit('smoke', pos, 12); g.particles.emit('mud', pos, 20); }
@@ -379,6 +383,9 @@ export class War {
         g.hud.toast('Four soldiers fall in behind you. (2 follow · 3 hold · 4 charge · 5 line)');
       }
     }
+    // a fight in the street sends townsfolk running
+    this.alarmT -= dt;
+    if (this.alarmT <= 0) { this.alarmT = 1; for (const s of this.soldiers) if (s.alive && s.fightTarget && s.st.pos.distanceTo(p) < 250) g.residents.alarm(s.st.pos, 28, false); }
     // soldier AI: pick the nearest enemy, else advance to the bridge or follow orders
     for (const s of this.soldiers) {
       if (!s.alive) continue;
@@ -416,6 +423,33 @@ export class War {
       else if (s.st.pos.distanceTo(p) > 1000 && !this.fronts.fronts.some((f) => f.live?.ids.has(s))) drop();
     }
 
+  }
+  /** One shot from an archer or musketeer at a point: a lobbed arrow, or a flat musket ball with smoke. */
+  volley(s: Soldier, target: THREE.Vector3) {
+    const g = this.game;
+    if (s.musket) {
+      s.volleyT = 13 + Math.random() * 6;
+      const from = s.st.pos.clone().add(new THREE.Vector3(0, 1.45, 0)), to = target.clone().add(new THREE.Vector3(0, 1.1, 0));
+      const dir = to.sub(from).normalize();
+      dir.x += (Math.random() - 0.5) * 0.05; dir.y += (Math.random() - 0.5) * 0.03 + 0.004; dir.z += (Math.random() - 0.5) * 0.05;
+      dir.normalize();
+      from.addScaledVector(dir, 1.1);
+      g.combat.shoot(from, dir.multiplyScalar(260), 70, false);
+      g.particles.emit('smoke', from, 10); g.particles.emit('spark', from, 6);
+      g.sound?.('musket', from, 1.2);
+      g.residents.alarm(from, 35, false);
+      return;
+    }
+    s.volleyT = 4 + Math.random() * 2.5;
+    const from = s.st.pos.clone().add(new THREE.Vector3(0, 1.5, 0)), to = target.clone().add(new THREE.Vector3((Math.random() - 0.5) * 5, 1.0, (Math.random() - 0.5) * 5));
+    const flat = Math.hypot(to.x - from.x, to.z - from.z), V = 48;
+    const disc = V ** 4 - 9.81 * (9.81 * flat * flat + 2 * (to.y - from.y) * V * V);
+    const ang = disc > 0 ? Math.atan((V * V - Math.sqrt(disc)) / (9.81 * flat)) : Math.PI / 4;
+    const hd = new THREE.Vector3(to.x - from.x, 0, to.z - from.z).normalize();
+    const vel = hd.multiplyScalar(V * Math.cos(ang)).setY(V * Math.sin(ang));
+    from.addScaledVector(vel.clone().normalize(), 0.9);
+    g.combat.shoot(from, vel, 30, false);
+    g.sound?.('swing', from, 0.25);
   }
   step(dt: number) { for (const s of this.soldiers) s.step(dt); }
   animate(dt: number) {

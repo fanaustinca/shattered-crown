@@ -36,17 +36,25 @@ const PLINTH = 0.35, FH = 3.0, T = 0.32;
 
 function mats(s: BuildingSpec) {
   const v = s.seed % 4;
-  const plasterTints = ['f4ecdc', 'efe0c4', 'e8dcc8', 'f8f2e6'];
+  // limewash came in every earth colour: white, cream, ochre, rose, salmon, sage, a cool grey-blue
+  const LIME = ['f4ecdc', 'efe0c4', 'e8c890', 'f0d0c0', 'd8e0e0', 'e8e4b8', 'f2dccc', 'dce4d0', 'f8f2e6', 'e6d2b0'];
+  const plasterTints = [LIME[(s.seed >> 3) % 10], LIME[(s.seed >> 5) % 10], LIME[(s.seed >> 7) % 10], LIME[(s.seed >> 9) % 10]];
   const wallOut = (s.style === 'stone' ? ['mat:medieval_blocks_02', 'mat:castle_wall_varriation|tint:d8d0c0', 'mat:white_sandstone_blocks_02', 'mat:castle_brick_02_white|tint:e0d8c8'][v]
     : s.style === 'dark' ? ['mat:castle_wall_slates', 'mat:defense_wall|tint:9a9aa0', 'mat:stacked_stone_wall|tint:8a8a90', 'mat:castle_wall_slates|tint:b0b0b4'][v]
-      : s.style === 'rustic' ? 'mat:stacked_stone_wall' : s.style === 'plaster' ? `mat:white_plaster_rough_01|tint:${plasterTints[v]}` : `mat:plastered_wall_02|tint:${plasterTints[v]}`) + '|wx:0.8';
+      : s.style === 'rustic' ? 'mat:stacked_stone_wall' : s.style === 'plaster' ? `mat:white_plaster_rough_01|vc:${plasterTints[v]}` : `mat:plastered_wall_02|vc:${plasterTints[v]}`) + '|wx:0.8';
   const ground = (s.style === 'timber' || s.style === 'plaster' ? (s.kingdom === 'ironreach' ? 'mat:stacked_stone_wall' : ['mat:medieval_blocks_02', 'mat:stacked_stone_wall|tint:d8c8b0'][v % 2]) : wallOut.replace('|wx:0.8', '')) + '|wx:1';
-  const roof = s.roof === 'thatch' ? 'mat:thatch_roof_angled' : s.roof === 'tile' ? 'mat:clay_roof_tiles_02' : s.roof === 'slate' ? 'mat:roof_slates_02' : 'mat:reed_roof_04';
+  const rt = (s.seed >> 11) % 4;
+  const roof = s.roof === 'thatch' ? 'mat:thatch_roof_angled|vc:' + ['ffffff', 'e8dcc0', 'c8bca8', 'f0e4c4'][rt]
+    : s.roof === 'tile' ? 'mat:clay_roof_tiles_02|vc:' + ['ffffff', 'c89070', 'f8c098', 'a08070'][rt]
+      : s.roof === 'slate' ? 'mat:roof_slates_02|vc:' + ['ffffff', 'b8c0d0', 'd0c8b8', '9a9aa0'][rt] : 'mat:reed_roof_04';
+  // timbers were tarred black, left brown, or painted ox-blood red or slate blue-grey
+  const ft = (s.seed >> 13) % 6;
+  const frame = 'wood:planks|stain:natural|fin:oiled|vc:' + ['2a2420', '2a2420', '6a4428', '7a2418', '4a3424', '4a5664'][ft];
   return {
     wallOut, ground, roof, inner: s.wealth > 0.6 ? 'mat:clay_plaster|in:1' : 'mat:white_plaster_rough_01|tint:e8dcc4|in:1', timber: 'wood:dark|stain:ebony|fin:raw',
     floor: s.wealth > 0.5 ? 'mat:old_wood_floor' : s.type === 'stable' || s.type === 'barn' || s.type === 'smithy' ? 'mat:clay_floor_001' : 'mat:plank_flooring_02',
     stoneFloor: 'mat:monastery_stone_floor', beam: 'wood:dark|stain:walnut|fin:raw', plinth: 'mat:stacked_stone_wall', roofIn: 'wood:planks|stain:walnut|fin:raw',
-    frame: 'wood:dark|stain:ebony|fin:oiled', glass: 'glass|c:b8c8b0', shutter: s.kingdom === 'ironreach' ? 'wood:weathered|stain:ebony|fin:raw' : 'mat:wood_shutter',
+    frame, glass: 'glass|c:b8c8b0', shutter: s.kingdom === 'ironreach' ? 'wood:weathered|stain:ebony|fin:raw' : 'mat:wood_shutter',
     chimney: 'mat:stacked_stone_wall|wx:1.2', hearth: 'mat:castle_brick_07',
   };
 }
@@ -129,7 +137,7 @@ export function generateBuilding(spec: BuildingSpec): BuildingModel {
       const outKey = f === 0 ? M.ground : M.wallOut;
       ext.wall(outKey, S.len, fh, T, openings, 0.45, M.inner, M.inner);
       // half-timber framing on plaster walls of upper floors (and ground for timber style)
-      if ((spec.style === 'timber' && (f > 0 || spec.kingdom !== 'ironreach')) || spec.style === 'plaster') halfTimber(ext, M.frame, S.len, fh, T, openings, r, f === 0 && spec.style === 'timber' ? 0 : 1);
+      if ((spec.style === 'timber' && (f > 0 || spec.kingdom !== 'ironreach')) || spec.style === 'plaster') halfTimber(ext, M.frame, S.len, fh, T, openings, r, f === 0 && spec.style === 'timber' ? 0 : 1, (spec.seed >> 15) % 4);
       // window frames, glass, shutters; door frames
       for (const o of openings) {
         const isDoor = o.y0 === 0;
@@ -209,6 +217,33 @@ export function generateBuilding(spec: BuildingSpec): BuildingModel {
   ext.push().translate(0, eaveY + ridgeH + roofT * 0.6, 0).rotateZ(Math.PI / 2);
   ext.cyl(spec.roof === 'thatch' ? M.roof : M.chimney, 0, -w / 2 - over, 0, 0.12, 0.12, w + over * 2, 8, true, 1);
   ext.pop();
+  // dormer windows in the front slope of bigger town houses
+  if (floors >= 2 && spec.roof !== 'thatch' && w >= 6 && ['house', 'townhouse', 'shop', 'tavern'].includes(spec.type) && r() < 0.55) {
+    const nd = w >= 9 ? 2 : 1;
+    for (let k = 0; k < nd; k++) {
+      const dx = nd === 1 ? 0 : (k - 0.5) * w * 0.45, z0 = d / 2 - 0.7, yb = eaveY + (d / 2 - z0) * Math.tan(pitch) - 0.1;
+      const dw = 1.3, dh = 1.3, dd = 1.8;
+      ext.box(M.wallOut, dx, yb + dh / 2, z0 - dd / 2, dw, dh, dd, 0.8);
+      ext.box(M.frame, dx, yb + dh / 2, z0 + 0.01, dw + 0.08, dh + 0.08, 0.06, 2);
+      ext.box(M.glass, dx, yb + dh / 2, z0 + 0.03, dw * 0.6, dh * 0.6, 0.02, 1);
+      ext.box(M.frame, dx, yb + dh / 2, z0 + 0.05, 0.04, dh * 0.6, 0.03, 2);
+      for (const sd of [1, -1]) { ext.push().translate(dx + sd * dw * 0.28, yb + dh + 0.32, z0 - dd / 2 + 0.1).rotateZ(-sd * 0.75); ext.box(M.roof, 0, 0, 0, dw * 0.75, roofT, dd + 0.4, 0.6); ext.pop(); }
+    }
+  }
+  // trade signs on wrought-iron brackets, and striped awnings over shop fronts
+  if (['shop', 'tavern', 'smithy'].includes(spec.type)) {
+    const sx = w / 2 - 0.9, sy = PLINTH + Math.min(fh * 0.85, 2.7);
+    ext.box('iron', sx, sy + 0.05, d / 2 + 0.55, 0.04, 0.04, 1.0, 2);
+    const sc = spec.type === 'tavern' ? ['color:2a5a2a', 'color:6a1a1a'][spec.seed % 2] : spec.type === 'smithy' ? 'color:2a2a2a' : ['color:1a3a6a', 'color:7a5a1a', 'color:5a1a4a'][spec.seed % 3];
+    ext.box('wood:planks|stain:walnut|fin:oiled', sx, sy - 0.32, d / 2 + 0.85, 0.05, 0.62, 0.62, 2);
+    ext.box(sc, sx + 0.03, sy - 0.32, d / 2 + 0.85, 0.01, 0.46, 0.46, 1);
+    ext.ellipsoid(spec.type === 'tavern' ? 'color:d8b040' : 'color:e8e0d0', sx + 0.04, sy - 0.32, d / 2 + 0.85, 0.01, 0.14, 0.14, 8);
+  }
+  if (spec.type === 'shop' || (spec.type === 'tavern' && r() < 0.5)) {
+    const aw = Math.min(w - 1, 4.5), dye = ['madder', 'woad', 'weld', 'moss'][(spec.seed >> 4) % 4];
+    for (let i = 0; i < 6; i++) { ext.push().translate(-aw / 2 + (i + 0.5) * aw / 6, PLINTH + 2.75, d / 2 + 0.55).rotateX(0.45); ext.box(`cloth:canvas|dye:${i % 2 ? 'cream' : dye}`, 0, 0, 0, aw / 6 + 0.01, 0.02, 1.2, 1); ext.pop(); }
+    for (const sd of [-1, 1]) ext.box('wood:dark|stain:walnut|fin:raw', sd * aw / 2, PLINTH + 2.5, d / 2 + 1.05, 0.04, 0.04, 0.04, 2);
+  }
   // ridge beam inside
   int.box(M.beam, 0, eaveY + ridgeH - 0.25, 0, w, 0.2, 0.2, 2);
   // tie beams across at the eaves
@@ -328,7 +363,7 @@ export function generateBuilding(spec: BuildingSpec): BuildingModel {
   return model;
 }
 
-function halfTimber(g: GeoBuilder, key: string, len: number, h: number, t: number, openings: { x0: number; x1: number; y0: number; y1: number }[], r: () => number, from: number) {
+function halfTimber(g: GeoBuilder, key: string, len: number, h: number, t: number, openings: { x0: number; x1: number; y0: number; y1: number }[], r: () => number, from: number, pattern = 0) {
   const z = t / 2 + 0.025;
   g.box(key, len / 2, 0.08, z, len, 0.16, 0.06, 2);
   g.box(key, len / 2, h - 0.08, z, len, 0.16, 0.06, 2);
@@ -344,10 +379,20 @@ function halfTimber(g: GeoBuilder, key: string, len: number, h: number, t: numbe
       const blocked = openings.some((o) => xm > o.x0 - 0.6 && xm < o.x1 + 0.6);
       if (!blocked) {
         g.box(key, xm, h * 0.48, z, len / posts, 0.12, 0.055, 2);
-        if (r() < 0.6 * from + 0.2) {
-          const ang = Math.atan2(h * 0.45, len / posts) * (r() < 0.5 ? 1 : -1);
+        const pw = len / posts;
+        if (pattern === 1) {
+          // St Andrew's crosses in the upper panels
+          for (const sg of [1, -1]) { g.push().translate(xm, h * 0.74, z).rotateZ(sg * Math.atan2(h * 0.45, pw)); g.box(key, 0, 0, 0, Math.hypot(pw, h * 0.45) * 0.95, 0.1, 0.05, 2); g.pop(); }
+        } else if (pattern === 2) {
+          // chevrons (a V in each lower panel)
+          for (const sg of [1, -1]) { g.push().translate(xm + sg * pw / 4, h * 0.25, z).rotateZ(-sg * Math.atan2(h * 0.4, pw / 2)); g.box(key, 0, 0, 0, Math.hypot(pw / 2, h * 0.4) * 0.95, 0.1, 0.05, 2); g.pop(); }
+        } else if (pattern === 3) {
+          // close studding: extra uprights in every panel
+          for (const f of [0.33, 0.66]) g.box(key, xm - pw / 2 + pw * f, h / 2, z, 0.1, h, 0.05, 2);
+        } else if (r() < 0.6 * from + 0.2) {
+          const ang = Math.atan2(h * 0.45, pw) * (r() < 0.5 ? 1 : -1);
           g.push().translate(xm, h * 0.74, z).rotateZ(ang);
-          g.box(key, 0, 0, 0, Math.hypot(len / posts, h * 0.45) * 0.95, 0.12, 0.05, 2);
+          g.box(key, 0, 0, 0, Math.hypot(pw, h * 0.45) * 0.95, 0.12, 0.05, 2);
           g.pop();
         }
       }

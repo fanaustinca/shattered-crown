@@ -289,6 +289,9 @@ export class BipedAnimator {
   init = true;
   sit = 0; ride = 0; sleep = 0; carry = 0; eat = 0; dead = 0;
   swingT = -1; swingDir: 'left' | 'right' | 'over' | 'thrust' = 'right';
+  private idleStep = [0, 1].map(() => ({ t: -1, from: new THREE.Vector3() }));
+  /** leaning into speed changes and turns; breathlessness after running */
+  private lastSpeed = 0; private accLean = 0; private turnLean = 0; private lastYaw = 0; exertion = 0;
   block = 0;
   limp = 0;
   heightScale = 1;
@@ -352,9 +355,16 @@ export class BipedAnimator {
     const sw = Math.sin(this.phase * Math.PI * 2);
     const still = moving ? 0 : 1;
     const shift = Math.sin(this.t * 0.37 + this.seed) * 0.035 * still * (1 - this.sit);
-    const breath = Math.sin(this.t * (moving ? 2.4 + run * 2 : 1.35) + this.seed);
-    B.hips.quaternion.copy(E(0, sw * 0.09 * Math.min(1, speed), this.limp * sw * 0.06 + shift));
-    B.spine.quaternion.copy(E(run * 0.26 + this.carry * -0.05 + breath * 0.008, -sw * 0.07 * Math.min(1, speed), -shift * 0.7));
+    const breath = Math.sin(this.t * (moving ? 2.4 + run * 2 : 1.35 + this.exertion * 2.5) + this.seed);
+    // lean forward when speeding up, back when pulling up; bank into turns at speed; puff after a sprint
+    const acc = (speed - this.lastSpeed) / Math.max(dt, 1e-3); this.lastSpeed = speed;
+    this.accLean += (THREE.MathUtils.clamp(acc * 0.03, -0.18, 0.18) - this.accLean) * Math.min(1, dt * 4);
+    let dYaw = st.yaw - this.lastYaw; dYaw = Math.atan2(Math.sin(dYaw), Math.cos(dYaw)); this.lastYaw = st.yaw;
+    this.turnLean += (THREE.MathUtils.clamp(-dYaw / Math.max(dt, 1e-3) * speed * 0.025, -0.22, 0.22) - this.turnLean) * Math.min(1, dt * 5);
+    this.exertion = THREE.MathUtils.clamp(this.exertion + (run > 0.5 ? dt * 0.08 : -dt * 0.04), 0, 1);
+    B.hips.quaternion.copy(E(0, sw * 0.09 * Math.min(1, speed), this.limp * sw * 0.06 + shift + this.turnLean * 0.6));
+    const puff = breath * (0.008 + this.exertion * 0.03 * still);
+    B.spine.quaternion.copy(E(run * 0.26 + this.accLean + this.carry * -0.05 + puff + this.exertion * 0.12 * still, -sw * 0.07 * Math.min(1, speed), -shift * 0.7 + this.turnLean * 0.4));
     B.chest.quaternion.copy(E(run * 0.06 - breath * 0.012, -sw * 0.1 * Math.min(1, speed), -shift * 0.4));
     // idle fidgets (only standing about, hands free)
     const free = !moving && this.carry < 0.1 && this.eat < 0.1 && this.sit < 0.1 && this.ride < 0.1 && this.sleep < 0.1 && this.dead < 0.1 && !st.armed && this.block < 0.1 && this.swingT < 0;
@@ -492,8 +502,19 @@ export class BipedAnimator {
         F.y += Math.sin(Math.pow(sp, 0.8 - run * 0.2) * Math.PI) * (0.1 + run * 0.4);
       } else {
         if (this.swinging[i]) { this.swinging[i] = false; this.planted[i].copy(this.to[i]); }
-        if (!moving && this.planted[i].distanceTo(home) > 0.12) this.planted[i].lerp(home, Math.min(1, dt * 5));
-        this.planted[i].y = this.ground(this.planted[i].x, this.planted[i].z);
+        // standing: a foot left behind by a turn or a shuffle is picked up and set down again (one at a
+        // time, with a little lift) instead of sliding over the ground
+        const st2 = this.idleStep[i];
+        if (st2.t >= 0) {
+          st2.t += dt / 0.32;
+          const u = Math.min(1, st2.t), e = u * u * (3 - 2 * u);
+          this.planted[i].copy(st2.from).lerp(home, e);
+          this.planted[i].y = this.ground(this.planted[i].x, this.planted[i].z) + Math.sin(u * Math.PI) * 0.07;
+          if (u >= 1) st2.t = -1;
+        } else {
+          if (!moving && this.planted[i].distanceTo(home) > 0.16 && this.idleStep[1 - i].t < 0 && this.sit < 0.1) { st2.t = 0; st2.from.copy(this.planted[i]); }
+          this.planted[i].y = this.ground(this.planted[i].x, this.planted[i].z);
+        }
         F = this.planted[i].clone();
       }
       const ankle = F.clone(); ankle.y += this.footH * this.heightScale;

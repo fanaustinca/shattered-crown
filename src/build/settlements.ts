@@ -7,7 +7,7 @@ import type { World } from '../world/world';
 import { Towns, type Placed, type TownPlan } from '../world/towns';
 import { generateBuilding, type BuildingModel } from './building';
 import { riverLevel } from '../world/layout';
-import { buildWalls, buildBridge, buildDock, fenceRect, well, stall, haystack, lampPost, trough, crane, lighthouse, cargo, fishRack, quay, type StructModel } from './structures';
+import { buildWalls, buildBridge, buildDock, fenceRect, well, stall, haystack, lampPost, trough, crane, lighthouse, cargo, fishRack, quay, windmill, type StructModel } from './structures';
 import { GeoBuilder } from './geom';
 import { BatchPool, type BatchHandle } from '../render/batch';
 import { LAYER_NEAR_DETAIL, LAYER_FAR_SHADOW } from '../render/pipeline';
@@ -103,6 +103,9 @@ export class Settlements {
   torches: THREE.Vector3[] = [];
   /** banner poles on the fortifications (the game hangs cloth banners on them) */
   flags: { pos: THREE.Vector3; style: string }[] = [];
+  /** town gates (portcullis passages) and the wall-walk posts beside them */
+  gates: { pos: THREE.Vector3; yaw: number; w: number; h: number; site: string; inward: THREE.Vector3 }[] = [];
+  wallWalk: { pos: THREE.Vector3; out: THREE.Vector3; gate: number }[] = [];
   saved = new Map<string, { id: string; pos: THREE.Vector3; quat: THREE.Quaternion; owner: string | null; age: number }[]>();
   candleState = new Map<string, number[]>();
   /** building shells (exterior, colliders, front doors) */
@@ -146,6 +149,8 @@ export class Settlements {
       }
       this.torches.push(...s.torches);
       if (s.flags) this.flags.push(...s.flags);
+      for (const gt of s.gates) if (gt.site) this.gates.push(gt as never);
+      if (s.walk) this.wallWalk.push(...s.walk);
     };
     // lone farmsteads share one structure model and one far-LOD mesh set (one draw per material for all of them)
     const country: StructModel = { geo: new GeoBuilder(), colliders: [], gates: [], torches: [] };
@@ -168,6 +173,7 @@ export class Settlements {
         else if (e.kind === 'cargo') cargo(town, e.x, e.z, e.yaw, ground, 1000 + i * 77);
         else if (e.kind === 'rack') fishRack(town, e.x, e.z, e.yaw, ground);
         else if (e.kind === 'quay') quay(town, e.x, e.z, e.yaw, e.len ?? 60, ground);
+        else if (e.kind === 'windmill') windmill(town, e.x, e.z, e.yaw, ground);
       });
       if (p.minor) continue;
       add(town);
@@ -271,7 +277,7 @@ export class Settlements {
   private stallWares = new Map<TownPlan, { props: Prop[]; day: number }>();
   private static WARES: Record<string, string[]> = {
     fruit: ['apple', 'pear', 'lemon', 'onion', 'turnip'], bread: ['bread', 'pastry'], cloth: ['cloth', 'rope', 'saddlebag'], pottery: ['jug', 'vase', 'bowl', 'plate', 'cup'],
-    meat: ['meat', 'salted_meat'], cheese: ['cheese', 'cheese_box'], weapons: ['sword', 'mace', 'shield', 'bow', 'arrow'], fish: ['fish', 'smoked_fish'],
+    meat: ['meat', 'salted_meat'], cheese: ['cheese', 'cheese_box'], weapons: ['sword', 'mace', 'shield', 'bow', 'arrow', 'musket', 'lead_shot'], fish: ['fish', 'smoked_fish'],
     candles: ['candle', 'lantern', 'book'], tools: ['hatchet', 'spade', 'axe', 'bucket', 'lockpick'],
   };
   private updateStalls(player: THREE.Vector3) {
@@ -280,16 +286,16 @@ export class Settlements {
       if (!p.stalls.length) continue;
       const d = Math.hypot(p.plaza.x - player.x, p.plaza.z - player.z);
       const have = this.stallWares.get(p);
-      if (d < 110 && !have) {
+      if (d < 45 && !have) {
         const r = mulberry32(Math.floor(p.site.x * 7 + p.site.z * 13) + day);
         const props: Prop[] = [];
         const owner = p.buildings.find((b) => b.spec.type === 'hall' || b.spec.type === 'shop')?.id ?? p.site.id;
         p.stalls.forEach((st) => {
           const ids = Settlements.WARES[st.goods] ?? Settlements.WARES.tools;
           const c = Math.cos(st.yaw), sn = Math.sin(st.yaw);
-          for (let i = 0; i < 5; i++) {
+          for (let i = 0; i < 4; i++) {
             // along the front of the counter (the static heaps of wares fill the back)
-            const lx = -1.1 + i * 0.55 + (r() - 0.5) * 0.1, lz = 0.62;
+            const lx = -1.0 + i * 0.66 + (r() - 0.5) * 0.1, lz = 0.62;
             const x = st.x + lx * c + lz * sn, z = st.z - lx * sn + lz * c;
             const id = ids[Math.floor(r() * ids.length)];
             if (!ITEMS[id]) continue;
@@ -299,7 +305,7 @@ export class Settlements {
           }
         });
         this.stallWares.set(p, { props, day });
-      } else if (have && (d > 200 || have.day !== day && d > 120)) {
+      } else if (have && (d > 75 || have.day !== day && d > 60)) {
         for (const pr of have.props) if (this.props.props.has(pr) && pr.owner !== 'player' && !pr.held && !pr.stowedIn) this.props.destroy(pr);
         this.stallWares.delete(p);
       }
@@ -450,6 +456,15 @@ export class Settlements {
       }
     }
     interior.updateMatrixWorld(true);
+    // furniture doesn't move: freeze every matrix in the interior except the moving parts (drawers, doors,
+    // lids) and the candles (wax burns down, flames flicker) — thousands fewer matrix rebuilds per frame
+    // and indoors the walls and roof already shade everything from the sun: furniture casting sun shadows into
+    // every cascade was ~200 shadow draws in a town street for no visible difference
+    interior.traverse((o) => { o.matrixAutoUpdate = false; if ((o as THREE.Mesh).isMesh) o.castShadow = false; });
+    for (const f of live.furniture) {
+      for (const mv of f.movables) mv.node.traverse((o) => { o.matrixAutoUpdate = true; });
+      for (const c of f.candles) c.node.traverse((o) => { o.matrixAutoUpdate = true; });
+    }
     live.furnished = true;
   }
 

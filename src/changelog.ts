@@ -1,5 +1,17 @@
 // What's new, newest first (shown in Help → What's new).
 export const CHANGELOG: { v: string; date: string; items: string[] }[] = [
+  { v: '0.5.0', date: '2026-10-14', items: [
+    'Conversations that actually go somewhere: every answer opens follow-up questions about what was just said (grief, the town\'s defences, their dreams, a drink, a joke), and the choices change as the talk drifts. Insults branch: apologise, laugh it off, buy them a drink — or make it worse and see what happens.',
+    'People notice you: a drawn blade, blood on you, their own things in your hands, the weather.',
+    'Smarter townsfolk: they run from fighting in the street, cannon fire, explosions and gunshots, and guards come to see what happened.',
+    'Town gates have iron-shod portcullises. When an enemy army comes near, the portcullis drops, pikemen form up behind it, and archers and musketeers climb to the wall-walk and shoot down at the attackers. Enough attackers battering a closed gate will force it. You can work the winch yourself (E).',
+    'Wall-walks are reachable: stone stairs climb the inside of the walls beside every gate. Castles have at least two gates, capitals at least five.',
+    'Matchlock muskets: buy one (and lead shot) from a smith or a weapons stall. Right-click to shoulder it, left-click to fire, R to reload (about 12 s). Musketeers fight in the armies too — half of Ironreach\'s shot, a third of Vanguardia\'s.',
+    'More varied towns: limewash in every earth colour, roofs in different tones, timbers tarred, brown, ox-blood red or slate blue, framing patterns (crosses, chevrons, close studding), dormer windows, hanging trade signs and striped awnings over the shops. Windmills stand by the villages and hamlets.',
+    'Animation: people step their feet round when they turn instead of sliding, lean into turns and into speeding up or pulling up, and are out of breath after a run.',
+    'The map marker is a dart that points the way you face.',
+    'Performance: furniture no longer casts pointless sun shadows indoors, static furniture is frozen, gates are drawn as two instanced meshes, and texture decoding runs off the main thread (less stutter walking into new areas).',
+  ] },
   { v: '0.4.0', date: '2026-10-14', items: [
     'Walking and running reworked: people walk with a natural vault over the standing leg instead of a hop, at a realistic cadence; runners kick their heels up, drive their knees and have a moment of flight between strides.',
     'Riding: your body stays square in the saddle and only your head and shoulders turn when you look around.',

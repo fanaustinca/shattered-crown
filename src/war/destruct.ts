@@ -41,6 +41,7 @@ export class Destruction {
   }
   /** A powder blast: a deep crater, walls smashed, everyone nearby thrown down or killed. */
   explode(at: THREE.Vector3, size = 1) {
+    this.game.residents.alarm(at, 70 * size);
     const g = this.game;
     const r = 6 * size;
     g.particles.emit('cannon', at.clone().setY(at.y + 0.5), 60, new THREE.Vector3(0, 1, 0));

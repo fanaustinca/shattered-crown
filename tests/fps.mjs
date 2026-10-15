@@ -13,7 +13,7 @@ const spots = [
 ];
 for (const [name, setup] of spots) {
   const r = await page.evaluate(async (setup) => {
-    const g = SC.game; g.manual = true; SC.setTime(11); eval(setup); g.freeCam = false;
+    const g = SC.game; g.manual = true; SC.setTime(11); try { weather('clear'); } catch {} eval(setup); g.freeCam = false;
     for (let i = 0; i < 30; i++) { g.step(1 / 60); g.renderFrame(); }
     g.manual = false;
     await new Promise((r) => setTimeout(r, 1500));

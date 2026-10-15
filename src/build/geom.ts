@@ -2,7 +2,7 @@
 // accumulated per material key with world-scaled UVs, then merged into a few meshes.
 import * as THREE from 'three';
 
-export interface Part { pos: number[]; nor: number[]; uv: number[]; idx: number[]; col?: number[] }
+export interface Part { pos: number[]; nor: number[]; uv: number[]; idx: number[]; col?: number[]; cur?: number[] }
 
 const _m = new THREE.Matrix4(), _n = new THREE.Matrix3(), _v = new THREE.Vector3();
 
@@ -19,10 +19,25 @@ export class GeoBuilder {
   rotateZ(a: number) { this.matrix.multiply(_m.makeRotationZ(a)); return this; }
   scale(x: number, y: number, z: number) { this.matrix.multiply(_m.makeScale(x, y, z)); return this; }
 
+  /** A key may carry '|vc:RRGGBB': the colour is baked per vertex and the part shares the '|vcol' material,
+   *  so a street of differently painted houses is still one material (one draw batch). */
   part(key: string): Part {
+    let col: number[] | null = null;
+    const vi = key.indexOf('|vc:');
+    if (vi >= 0) {
+      const c = new THREE.Color(parseInt(key.slice(vi + 4, vi + 10), 16));
+      col = [c.r, c.g, c.b];
+      key = key.slice(0, vi) + key.slice(vi + 10) + '|vcol';
+    }
     let p = this.parts.get(key);
     if (!p) { p = { pos: [], nor: [], uv: [], idx: [] }; this.parts.set(key, p); }
+    if (col || p.col || key.endsWith('|vcol')) { GeoBuilder.padCol(p); p.cur = col ?? [1, 1, 1]; }
     return p;
+  }
+  private static padCol(p: Part) {
+    p.col ??= [];
+    const n = p.pos.length / 3, c = p.cur ?? [1, 1, 1];
+    while (p.col.length / 3 < n) p.col.push(c[0], c[1], c[2]);
   }
 
   /** Add a quad (4 points, CCW from outside) with uv per unit length. */
@@ -169,6 +184,7 @@ export class GeoBuilder {
       g.setAttribute('position', new THREE.Float32BufferAttribute(p.pos, 3));
       g.setAttribute('normal', new THREE.Float32BufferAttribute(p.nor, 3));
       g.setAttribute('uv', new THREE.Float32BufferAttribute(p.uv, 2));
+      if (p.col) { GeoBuilder.padCol(p); g.setAttribute('color', new THREE.Float32BufferAttribute(p.col, 3)); }
       g.setIndex(p.pos.length / 3 > 65535 ? new THREE.Uint32BufferAttribute(p.idx, 1) : new THREE.Uint16BufferAttribute(p.idx, 1));
       g.computeBoundingSphere(); g.computeBoundingBox();
       out.set(k, g);
@@ -181,6 +197,7 @@ export class GeoBuilder {
     for (const [k, p] of other.parts) {
       const t = this.part(k);
       const base = t.pos.length / 3;
+      if (p.col) { GeoBuilder.padCol(p); GeoBuilder.padCol(t); t.col!.push(...p.col); t.cur = p.cur; }
       for (let i = 0; i < p.pos.length; i += 3) {
         _v.set(p.pos[i], p.pos[i + 1], p.pos[i + 2]).applyMatrix4(m); t.pos.push(_v.x, _v.y, _v.z);
         _v.set(p.nor[i], p.nor[i + 1], p.nor[i + 2]).applyMatrix3(nm).normalize(); t.nor.push(_v.x, _v.y, _v.z);

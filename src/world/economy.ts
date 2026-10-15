@@ -9,14 +9,14 @@ import { mulberry32 } from '../core/noise';
 
 const PRODUCE: Record<string, string[]> = {
   vanguardia: ['bread', 'apple', 'pear', 'cheese', 'cheese_box', 'cloth', 'onion', 'turnip', 'pastry', 'wine_jug', 'candle', 'salt'],
-  ironreach: ['sword', 'mace', 'axe', 'hatchet', 'shield', 'spade', 'wood_log', 'salted_meat', 'smoked_fish', 'arrow', 'lockpick', 'powder'],
+  ironreach: ['sword', 'mace', 'axe', 'hatchet', 'shield', 'spade', 'wood_log', 'salted_meat', 'smoked_fish', 'arrow', 'lockpick', 'powder', 'musket', 'lead_shot'],
   isles: ['fish', 'smoked_fish', 'lemon', 'rope', 'salt'],
   river: [],
 };
 const STOCK: Record<string, string[]> = {
   merchant: ['apple', 'pear', 'bread', 'cheese_box', 'onion', 'turnip', 'cloth', 'candle', 'basket', 'bucket', 'rope', 'saddlebag', 'salt', 'bandage', 'lantern', 'lockpick', 'cup', 'plate', 'jug'],
   innkeeper: ['bread', 'pastry', 'cheese', 'wine_jug', 'tankard', 'meat', 'smoked_fish', 'apple'],
-  blacksmith: ['sword', 'mace', 'axe', 'hatchet', 'shield', 'spade', 'pitchfork', 'arrow', 'bow', 'key', 'lockpick'],
+  blacksmith: ['sword', 'mace', 'axe', 'hatchet', 'shield', 'spade', 'pitchfork', 'arrow', 'bow', 'musket', 'lead_shot', 'key', 'lockpick'],
 };
 
 export class Economy {

@@ -5,7 +5,7 @@ import { GeoBuilder } from './geom';
 import type { WallPlan } from '../world/towns';
 import type { Bridge } from '../world/layout';
 
-export interface StructModel { sections?: import('../war/destruct').WallSection[]; geo: GeoBuilder; colliders: { c: THREE.Vector3; h: THREE.Vector3; q?: THREE.Quaternion }[]; gates: { pos: THREE.Vector3; yaw: number; w: number; h: number }[]; torches: THREE.Vector3[]; flags?: { pos: THREE.Vector3; style: 'stone' | 'dark' | 'palisade' }[] }
+export interface StructModel { sections?: import('../war/destruct').WallSection[]; geo: GeoBuilder; colliders: { c: THREE.Vector3; h: THREE.Vector3; q?: THREE.Quaternion }[]; gates: { pos: THREE.Vector3; yaw: number; w: number; h: number; site?: string; inward?: THREE.Vector3 }[]; walk?: { pos: THREE.Vector3; out: THREE.Vector3; gate: number }[]; torches: THREE.Vector3[]; flags?: { pos: THREE.Vector3; style: 'stone' | 'dark' | 'palisade' }[] }
 
 const q = (yaw: number) => new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
 
@@ -22,6 +22,8 @@ export function buildWalls(plan: WallPlan, ground: (x: number, z: number) => num
   const H = plan.height, T = 2.6;
   const n = plan.pts.length;
   const cx = plan.center?.[0] ?? plan.pts.reduce((s, p) => s + p[0], 0) / n, cz = plan.center?.[1] ?? plan.pts.reduce((s, p) => s + p[1], 0) / n;
+  const gateAt = (i: number) => { const a = plan.pts[i], b = plan.pts[(i + 1) % n]; const ang = Math.atan2((a[1] + b[1]) / 2 - cz, (a[0] + b[0]) / 2 - cx); return plan.gates.some((ga) => Math.abs(Math.atan2(Math.sin(ga - ang), Math.cos(ga - ang))) < Math.PI / n + 0.01); };
+  const gateFlags = Array.from({ length: n }, (_, i) => gateAt(i));
   for (let i = 0; i < n; i++) {
     const a = plan.pts[i], b = plan.pts[(i + 1) % n];
     const mx = (a[0] + b[0]) / 2, mz = (a[1] + b[1]) / 2;
@@ -30,7 +32,7 @@ export function buildWalls(plan: WallPlan, ground: (x: number, z: number) => num
     // find ground under the segment (walls step down slopes)
     const gy = Math.min(ground(a[0], a[1]), ground(b[0], b[1]), ground(mx, mz)) - 1.5;
     const ang = Math.atan2(mz - cz, mx - cx);
-    const isGate = plan.gates.some((ga) => Math.abs(Math.atan2(Math.sin(ga - ang), Math.cos(ga - ang))) < Math.PI / n + 0.01);
+    const isGate = gateFlags[i];
     stone = pal[(i * 7 + (i >> 2)) % pal.length];
     g.push().translate(mx, gy, mz).rotateY(-yaw);
     // the wall runs along local x; local +z points outward? compute side
@@ -49,8 +51,8 @@ export function buildWalls(plan: WallPlan, ground: (x: number, z: number) => num
       }
       crenels(g, cap, 0, totalH + 3, gw, T + 3);
       void archY;
-      const gp = new THREE.Vector3(0, ground(mx, mz), 0).applyMatrix4(g.matrix);
-      out.gates.push({ pos: gp, yaw: -yaw + Math.PI / 2, w: gw, h: 6.5 });
+      const gp = new THREE.Vector3(0, ground(mx, mz) - gy, 0).applyMatrix4(g.matrix);
+      out.gates.push({ pos: gp, yaw: -yaw, w: gw, h: Math.min(6.5, passH), site: plan.site, inward: new THREE.Vector3(cx - mx, 0, cz - mz).normalize() });
       out.torches.push(new THREE.Vector3(-gw / 2 - 0.3, ground(mx, mz) - gy + 3.5, T / 2 + 1.6).applyMatrix4(g.matrix), new THREE.Vector3(gw / 2 + 0.3, ground(mx, mz) - gy + 3.5, T / 2 + 1.6).applyMatrix4(g.matrix));
       const wq = q(-yaw);
       for (const s of [-1, 1]) {
@@ -60,6 +62,36 @@ export function buildWalls(plan: WallPlan, ground: (x: number, z: number) => num
       const top = new THREE.Vector3(0, (passH + totalH + 3) / 2, 0).applyMatrix4(g.matrix);
       out.colliders.push({ c: top, h: new THREE.Vector3(gw / 2, (totalH + 3 - passH) / 2, (T + 3) / 2), q: wq });
     } else {
+      // beside a gate: a stone stair up the inside face to the wall-walk, and places for the defenders
+      const prevGate = gateFlags[(i - 1 + n) % n], nextGate = gateFlags[(i + 1) % n];
+      if ((prevGate || nextGate) && len > 26) {
+        const zw = new THREE.Vector3(0, 0, 1).applyAxisAngle(new THREE.Vector3(0, 1, 0), -yaw);
+        const inS = Math.sign(zw.x * (cx - mx) + zw.z * (cz - mz)) || 1;
+        const towerR = (plan.style === 'dark' ? 3.4 : 3.8) + 1.6;
+        const dirX = prevGate ? -1 : 1;                       // the stair climbs toward the gate end
+        const xTop = dirX * (len / 2 - towerR - 2.6), run = Math.min(len - towerR * 2 - 6, totalH / Math.tan(0.62));
+        const xBot = xTop - dirX * run, zs = inS * (T / 2 + 0.85);
+        const gl = (x: number) => { const w = new THREE.Vector3(x, 0, zs).applyMatrix4(g.matrix); return ground(w.x, w.z) - gy; };
+        const y0 = gl(xBot), N = Math.max(8, Math.round((totalH - y0) / 0.24));
+        for (let k = 0; k < N; k++) {
+          const t = (k + 0.5) / N, x = xBot + (xTop - xBot) * t, yt = y0 + (totalH - y0) * (k + 1) / N;
+          const base = Math.min(gl(x), yt) - 0.6;
+          g.box(stone, x, (yt + base) / 2, zs, run / N + 0.02, yt - base, 1.7, 0.38);
+        }
+        // the landing reaches across onto the wall-walk
+        g.box(cap, xTop + dirX * 1.3, totalH - 0.1, zs / 2, 2.6, 0.22, Math.abs(zs) + 1.7, 0.5);
+        const ang2 = Math.atan2(totalH - y0, run) * dirX;
+        const mid = new THREE.Vector3((xBot + xTop) / 2, (y0 + totalH) / 2 - 0.12, zs).applyMatrix4(g.matrix);
+        out.colliders.push({ c: mid, h: new THREE.Vector3(Math.hypot(run, totalH - y0) / 2 + 0.2, 0.12, 0.85), q: q(-yaw).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), ang2)) });
+        out.colliders.push({ c: new THREE.Vector3(xTop + dirX * 1.3, totalH - 0.1, zs / 2).applyMatrix4(g.matrix), h: new THREE.Vector3(1.3, 0.11, (Math.abs(zs) + 1.7) / 2), q: q(-yaw) });
+        // posts on the wall-walk for archers, between the towers, facing out
+        const outward = zw.clone().multiplyScalar(-inS);
+        for (let k = 0; k < 5; k++) {
+          const x = -len / 2 + towerR + 2 + (k + 0.5) * (len - towerR * 2 - 4) / 5;
+          out.walk = out.walk ?? [];
+          out.walk.push({ pos: new THREE.Vector3(x, totalH + 0.1, -inS * 0.2).applyMatrix4(g.matrix), out: outward.clone(), gate: out.gates.length });
+        }
+      }
       // the curtain is built in ~6 m sections, each one its own piece of masonry that can be cracked and
       // brought down by gunfire (the battered footing stays: it's mostly earth and rubble core)
       const footH = 1.5 + (ground(mx, mz) - gy) + 1.2;
@@ -420,4 +452,38 @@ export function quay(out: StructModel, x: number, z: number, yaw: number, len: n
     g.pop();
     out.colliders.push({ c: new THREE.Vector3(cx + fx * 1.0, (top + bottom) / 2, cz + fz * 1.0), h: new THREE.Vector3(len / n / 2 + 0.05, (top - bottom) / 2, 1.5), q: yq(yaw) });
   }
+}
+
+/** A post mill: a round brick roundhouse, the weatherboarded body with its gabled cap turned into the wind,
+ *  the tail pole and four lattice sails with their canvas half set. */
+export function windmill(out: StructModel, x: number, z: number, yaw: number, ground: (x: number, z: number) => number) {
+  const y = ground(x, z), g = out.geo;
+  const BOARD = 'wood:weathered|stain:honey|fin:raw', DARKW = 'wood:dark|stain:walnut|fin:raw';
+  g.push().translate(x, y, z).rotateY(yaw);
+  g.cyl('mat:castle_brick_07|wx:1.2', 0, -0.4, 0, 3.1, 2.9, 3.6, 20, true, 0.6);
+  g.cyl('mat:roof_slates_02', 0, 3.2, 0, 3.3, 1.2, 0.9, 20, false, 0.6);
+  // the body on its post
+  g.box(BOARD, 0, 6.3, 0, 3.6, 5.0, 4.6, 0.8);
+  for (let k = 0; k < 9; k++) g.box(DARKW, 0, 4.0 + k * 0.55, 2.32, 3.62, 0.05, 0.03, 2);
+  for (const sd of [1, -1]) { g.push().translate(sd * 1.0, 9.45, 0).rotateZ(-sd * 0.9); g.box('mat:roof_slates_02|tint:8a7a68', 0, 0, 0, 2.6, 0.12, 4.9, 0.6); g.pop(); }
+  g.box(BOARD, 0, 8.9, 2.35, 3.4, 1.4, 0.06, 0.8);
+  g.box('wood:dark|stain:ebony|fin:raw', 0, 5.0, 2.33, 0.9, 1.7, 0.05, 2);           // door
+  g.push().translate(0, 4.0, -2.3).rotateX(-0.45); g.box(DARKW, 0, -2.2, 0, 0.25, 4.8, 0.25, 2); g.pop();   // tail pole and ladder
+  // windshaft hub and four sails
+  // the windshaft stands well proud of the body so the sails clear the roundhouse, and they clear the ground
+  g.push().translate(0, 7.8, 2.4).rotateX(-0.12);
+  g.push().rotateX(Math.PI / 2); g.cyl(DARKW, 0, 0, 0, 0.26, 0.3, 1.6, 10, true, 2); g.pop();
+  const SL = 6.6;
+  for (let k = 0; k < 4; k++) {
+    g.push().translate(0, 0, 1.55).rotateZ(k * Math.PI / 2 + 0.3);
+    g.box(DARKW, 0, SL / 2, 0, 0.18, SL, 0.18, 2);
+    for (let b = 0; b < 8; b++) g.box(DARKW, 0.45, 1.2 + b * (SL - 1.5) / 7, 0.02, 0.9, 0.05, 0.04, 2);
+    g.box(DARKW, 0.9, (SL + 1.0) / 2, 0.02, 0.05, SL - 1.0, 0.04, 2);
+    g.box('cloth:canvas|dye:cream', 0.45, (SL + 1.0) / 2, 0.06, 0.9, SL - 1.2, 0.015, 1);
+    g.pop();
+  }
+  g.pop();
+  g.pop();
+  out.colliders.push({ c: new THREE.Vector3(x, y + 1.4, z), h: new THREE.Vector3(2.6, 1.8, 2.6) });
+  out.colliders.push({ c: new THREE.Vector3(x, y + 6.3, z), h: new THREE.Vector3(2.0, 2.5, 2.4), q: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw) });
 }

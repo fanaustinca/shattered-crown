@@ -198,10 +198,15 @@ export class Fronts {
   }
   private makeArcher(s: Soldier) {
     s.archer = true;
-    s.volleyT = 3 + Math.random() * 3;
+    // Ironreach has the mines and the powder mills: half its shot are musketeers; Vanguardia a third
+    s.musket = Math.random() < (s.side === 'ironreach' ? 0.5 : 0.3);
+    s.volleyT = s.musket ? 6 + Math.random() * 6 : 3 + Math.random() * 3;
     if (s.sword) s.sword.visible = false;
-    const bow = buildItemMesh(ITEMS.bow);
-    if (bow) { bow.position.set(0.02, -0.08, 0.02); s.rig.byName.handL.add(bow); }
+    const m = buildItemMesh(s.musket ? ITEMS.musket : ITEMS.bow);
+    if (m) {
+      if (s.musket) { m.rotation.set(1.2, 0, 0); m.position.set(0, -0.05, 0.05); s.rig.byName.handR.add(m); }
+      else { m.position.set(0.02, -0.08, 0.02); s.rig.byName.handL.add(m); }
+    }
   }
 
   private fight(f: Front, dt: number) {
@@ -220,12 +225,23 @@ export class Fronts {
         const e = this.nearestFoeS(s, L, lateral);
         const d = e ? e.st.pos.distanceTo(s.st.pos) : 1e9;
         if (d < 14) { if (s.sword) s.sword.visible = true; if (b.phase !== 'charge') { b.phase = 'charge'; s.sprint = true; } }
-        else if (L.t > 18 && d > 95 && b.phase !== 'charge') { if (b.phase === 'form') { b.phase = 'advance'; s.path = this.route(f, s.st.pos, b.enemy.clone().addScaledVector(across, lateral), lateral * 0.15); } }
+        else if (L.t > 18 && d > (s.musket ? 75 : 95) && b.phase !== 'charge') { if (b.phase === 'form') { b.phase = 'advance'; s.path = this.route(f, s.st.pos, b.enemy.clone().addScaledVector(across, lateral), lateral * 0.15); } }
         else if (L.t > 18 && e && b.phase !== 'charge') {
           s.path = []; s.st.speed = 0;
           s.st.yaw = Math.atan2(e.st.pos.x - s.st.pos.x, e.st.pos.z - s.st.pos.z);
           s.volleyT -= dt;
-          if (s.volleyT <= 0) {
+          if (s.volleyT <= 0 && s.musket) {
+            // present, fire: a flat shot with a matchlock's scatter, a crack and a bank of white smoke
+            s.volleyT = 13 + Math.random() * 6;
+            const from = s.st.pos.clone().add(new THREE.Vector3(0, 1.45, 0)), to = e.st.pos.clone().add(new THREE.Vector3(0, 1.1, 0));
+            const dir = to.sub(from).normalize();
+            dir.x += (Math.random() - 0.5) * 0.05; dir.y += (Math.random() - 0.5) * 0.03 + 0.004; dir.z += (Math.random() - 0.5) * 0.05;
+            dir.normalize();
+            from.addScaledVector(dir, 1.1);
+            g.combat.shoot(from, dir.multiplyScalar(260), 70, false);
+            g.particles.emit('smoke', from, 10); g.particles.emit('spark', from, 6);
+            g.sound?.('musket', from, 1.2);
+          } else if (s.volleyT <= 0) {
             s.volleyT = 4 + Math.random() * 2.5;
             // a high, arcing shot at the enemy mass: solve the launch angle for the range, then add the
             // scatter of a tired arm in a crowd

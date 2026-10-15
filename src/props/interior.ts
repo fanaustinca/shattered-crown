@@ -286,7 +286,7 @@ export function furnish(model: BuildingModel, seed: number): { furniture: Placem
     const fill = FILL[rm.kind];
     if (fill) {
       const floorThings = () => out.filter((q) => q.room === ri && !q.wallMounted && !['chair', 'stool', 'candle', 'rug'].includes(q.model.category)).length;
-      const target = Math.floor(area / (rm.kind === 'bedroom' ? 5 : 4.5));
+      const target = Math.floor(area / (rm.kind === 'bedroom' ? 5.5 : 5.2));
       for (let t = 0; t < 14 && floorThings() < target; t++) {
         const [cat, names] = fill[Math.floor(r() * fill.length)];
         const ok = designs(cat).filter((d) => d !== 'throne' && (!names || names.includes(d)));

@@ -87,6 +87,8 @@ export function material(key: string): THREE.Material {
   if (opts.wx) weathering(m as THREE.MeshStandardMaterial, +opts.wx);
   // interior surfaces: the sky light (IBL) mostly doesn't reach inside rooms
   if (opts.in) (m as THREE.MeshStandardMaterial).envMapIntensity = 0.22;
+  // per-vertex tint (limewash colours, painted timbers, roof tones) without a material per colour
+  if ('vcol' in opts) (m as THREE.MeshStandardMaterial).vertexColors = true;
   prep?.(m!);
   cache.set(key, m!);
   return m!;

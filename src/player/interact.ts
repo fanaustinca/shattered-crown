@@ -190,7 +190,7 @@ export class Interaction {
     this.money -= pr.price;
     g.hud.toast(`Bought ${pr.def.name.toLowerCase()} for ${pr.price} pennies.`);
     pr.owner = 'player'; pr.price = null;
-    g.sound?.('pickup', pr.obj.position, 0.6);
+    g.sound?.('coins', pr.obj.position, 0.6);
   }
 
   // ---------- holding ----------

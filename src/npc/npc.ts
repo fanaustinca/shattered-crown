@@ -184,10 +184,12 @@ export class NPC {
       }
       if (this.health.torso < 25 && this.person.role !== 'guard') { this.hostile = false; this.activity = 'flee'; }
     } else if (this.activity === 'flee') {
-      const away = st.pos.clone().sub(p.pos).setY(0).normalize();
+      // run from whatever frightened us (the player, a fight, a blast), then make for home
+      const from = this.fleeFrom ?? p.pos;
+      const away = st.pos.clone().sub(from).setY(0).normalize();
       goal = st.pos.clone().addScaledVector(away, 10);
       speed = 5 * (1 - this.anim.limp * 0.6);
-      if (st.pos.distanceTo(p.pos) > 40) { this.activity = 'home'; this.path = []; }
+      if (st.pos.distanceTo(from) > (this.fleeFrom ? 55 : 40)) { this.activity = 'home'; this.path = []; this.fleeFrom = null; }
     } else if (this.activity === 'arrest') {
       goal = p.pos.clone(); st.look = p.eyePos();
       const d = st.pos.distanceTo(p.pos);
@@ -313,6 +315,8 @@ export class NPC {
   chkPos = new THREE.Vector3(1e9, 0, 0);
   noProgress = false;
   holdAt: THREE.Vector3 | null = null;
+  /** where the danger is that we're running from (null: the player) */
+  fleeFrom: THREE.Vector3 | null = null;
 }
 
 // ------------------------------------------------------------------------------------------
@@ -322,6 +326,17 @@ interface Abstract { person: Person; home: Placed; work: Placed | null; where: T
 export class Residents {
   people: Abstract[] = [];
   live: NPC[] = [];
+  /** Something frightening happened at pos (a blast, a shot, a fight): townsfolk near it run, guards come. */
+  alarm(pos: THREE.Vector3, r: number, shout = true) {
+    for (const n of this.live) {
+      if (!n.alive || n.hostile || n.activity === 'flee' || n.activity === 'arrest') continue;
+      const d = n.st.pos.distanceTo(pos);
+      if (d > r) continue;
+      if (n.person.role === 'guard') { if (d < r * 0.6 && n.activity !== 'fight') { n.activity = 'investigate'; n.path = [pos.clone()]; } continue; }
+      n.activity = 'flee'; n.fleeFrom = pos.clone(); n.path = []; n.talkPartner = null;
+      if (shout && Math.random() < 0.3) n.say(['Run!', 'Gods preserve us!', 'Get inside!', 'They\'re fighting!'][Math.floor(Math.random() * 4)], true);
+    }
+  }
   private lastActivityCheck = -1;
   cap = 90;
   constructor(public game: Game) {

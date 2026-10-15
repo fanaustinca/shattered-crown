@@ -1,0 +1,11 @@
+import { launch, openPage, serve, shots } from './harness.mjs';
+import path from 'node:path';
+const srv = await serve(); const b = await launch();
+const { page } = await openPage(b, `http://127.0.0.1:${srv.address().port}/?test&quality=low`, { width: 900, height: 700 });
+await page.waitForFunction(() => window.SC?.game?.ready, { timeout: 240000 });
+await page.evaluate(() => { const g = SC.game; g.player.yaw = 0.8; g.ui.openPause('map'); });
+await new Promise((r) => setTimeout(r, 800));
+const el = await page.$('.map .me');
+const bb = await el.boundingBox();
+await page.screenshot({ path: path.join(shots, 'mapmark.png'), clip: { x: bb.x - 60, y: bb.y - 60, width: bb.width + 120, height: bb.height + 120 } });
+await b.close(); srv.close();
