@@ -253,7 +253,7 @@ export class Fronts {
   private makeArcher(s: Soldier) {
     s.archer = true;
     // Ironreach has the mines and the powder mills: half its shot are musketeers; Vanguardia a third
-    s.musket = Math.random() < (s.side === 'ironreach' ? 0.5 : 0.3);
+    s.musket = Math.random() < (s.side === 'ironreach' ? 0.25 : 0.15);
     s.volleyT = s.musket ? 6 + Math.random() * 6 : 3 + Math.random() * 3;
     if (s.sword) s.sword.visible = false;
     const m = buildItemMesh(s.musket ? ITEMS.musket : ITEMS.bow);
@@ -369,7 +369,7 @@ export class Fronts {
     s.person.name = (s.side === 'vanguardia' ? ['Captain Aldric', 'Lord Marshal Wynne', 'Captain Edrys', 'Sir Hollis'] : ['Warlord Kael', 'Captain Varr', 'Iron Marshal Bjorn', 'Thane Ulric'])[Math.floor(Math.random() * 4)];
     // a tall plume on the helm and a cloak in the kingdom's colour, so he can be picked out on the field
     const plume = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 6).scale(0.6, 2.2, 1), new THREE.MeshStandardMaterial({ color: s.side === 'vanguardia' ? 0xe8e0d0 : 0xb01818, roughness: 0.9 }));
-    plume.position.set(0, 1.86, -0.05);
+    plume.position.set(0, 0.27, -0.03);
     s.rig.byName.head.add(plume);
     this.war.carryStandard(s);
   }

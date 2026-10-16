@@ -35,24 +35,24 @@ export const CLASSES: Record<ShipClass, ClassSpec> = {
   brigantine: {
     name: 'Brigantine', L: 26, B: 7.2, decks: [1.5, 4.3], gunDecks: [], portsPerSide: 0, weatherGuns: 5,
     qdH: 1.9, qdTo: -0.48, fcH: 1.4, fcFrom: 0.62, masts: [{ at: 0.3, h: 21, yards: 3 }, { at: -0.12, h: 23, yards: 3 }],
-    draft: 2.9, mass: 160000, paint: { hull: 'wood:planks|stain:walnut|fin:oiled', band: 'wood:planks|stain:amber|fin:oiled', wale: DARK, inner: 'wood:planks|stain:honey|fin:raw|in:1' }, bowsprit: 9,
+    draft: 2.9, mass: 160000, paint: { hull: 'nat:6a4a30', band: 'paint:3a5a6a', wale: 'paint:24201c', inner: 'wood:planks|stain:honey|fin:raw|in:1' }, bowsprit: 9,
   },
   frigate: {
     name: 'Frigate', L: 44, B: 11.6, decks: [2.0, 4.2, 6.3, 8.7], gunDecks: [2], portsPerSide: 13, weatherGuns: 6,
     qdH: 2.1, qdTo: -0.38, fcH: 1.6, fcFrom: 0.6, masts: [{ at: 0.33, h: 34, yards: 3 }, { at: 0.0, h: 38, yards: 3 }, { at: -0.32, h: 28, yards: 3 }],
-    draft: 4.6, mass: 900000, paint: { hull: 'wood:planks|stain:ebony|fin:oiled', band: 'wood:planks|stain:honey|fin:oiled', wale: DARK, inner: 'wood:planks|stain:oxblood|fin:raw|in:1' }, bowsprit: 14,
+    draft: 4.6, mass: 900000, paint: { hull: 'paint:262320', band: 'paint:c89a48', wale: 'paint:1a1816', inner: 'wood:planks|stain:oxblood|fin:raw|in:1' }, bowsprit: 14,
   },
   manowar: {
     name: "Man-o'-war", L: 58, B: 16, decks: [2.4, 5.2, 8.4, 10.8, 13.2, 15.6], gunDecks: [2, 3, 4], portsPerSide: 15, weatherGuns: 7,
     qdH: 2.2, qdTo: -0.36, fcH: 1.8, fcFrom: 0.6, masts: [{ at: 0.33, h: 50, yards: 4 }, { at: 0.0, h: 56, yards: 4 }, { at: -0.31, h: 42, yards: 3 }],
-    draft: 6.8, mass: 2600000, paint: { hull: 'wood:planks|stain:ebony|fin:oiled', band: 'wood:planks|stain:amber|fin:oiled', wale: DARK, inner: 'wood:planks|stain:oxblood|fin:raw|in:1' }, bowsprit: 18,
+    draft: 6.8, mass: 2600000, paint: { hull: 'paint:1e1c1a', band: 'paint:d0a650', wale: 'paint:141210', inner: 'wood:planks|stain:oxblood|fin:raw|in:1' }, bowsprit: 18,
   },
   // debug only (spawn.leviathan()): a sea monster of a ship — four enclosed gun decks of thirty ports a side,
   // seven decks in all, four towering masts, a crew of hundreds, too deep for anything but open sea
   leviathan: {
     name: 'Leviathan', L: 112, B: 30, decks: [3.0, 6.4, 9.6, 12.6, 15.6, 18.6, 21.6], gunDecks: [2, 3, 4, 5], portsPerSide: 30, weatherGuns: 12,
     qdH: 2.6, qdTo: -0.4, fcH: 2.3, fcFrom: 0.62, masts: [{ at: 0.42, h: 88, yards: 5 }, { at: 0.14, h: 102, yards: 5 }, { at: -0.14, h: 96, yards: 5 }, { at: -0.4, h: 70, yards: 4 }],
-    draft: 11.5, mass: 14000000, paint: { hull: 'wood:planks|stain:ebony|fin:oiled', band: 'wood:planks|stain:oxblood|fin:oiled', wale: 'brass', inner: 'wood:planks|stain:oxblood|fin:raw|in:1' }, bowsprit: 32,
+    draft: 11.5, mass: 14000000, paint: { hull: 'paint:181614', band: 'paint:8a1c16', wale: 'paint:c8a040', inner: 'wood:planks|stain:oxblood|fin:raw|in:1' }, bowsprit: 32,
   },
 };
 
@@ -84,8 +84,22 @@ export interface ShipPlan {
 
 const ss = (a: number, b: number, x: number) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
+/** Painted or oiled planking with a per-strake tone: 'paint:RRGGBB' (painted, a little worn) or 'nat:RRGGBB'
+ *  (bare oiled timber). Every strake and every few metres of it differs a little, like real paintwork. */
+function strake(key: string, j: number, i: number) {
+  const m = /^(paint|nat):([0-9a-f]{6})$/.exec(key);
+  if (!m) return key;
+  const c = new THREE.Color(parseInt(m[2], 16));
+  const h = Math.sin(j * 12.9898 + Math.floor(i / 3) * 78.233) * 43758.5453, f = 0.86 + (h - Math.floor(h)) * 0.28;
+  c.multiplyScalar(f);
+  const hex = c.getHexString();
+  return m[1] === 'paint' ? `wood:planks|stain:whitewash|fin:waxed|wx:0.7|vc:${hex}` : `wood:planks|stain:natural|fin:oiled|wx:0.5|vc:${hex}`;
+}
+
 export function planShip(cls: ShipClass): ShipPlan {
-  const S = CLASSES[cls];
+  const S0 = CLASSES[cls];
+  // painted keys resolve to plank materials wherever they're used outside the strake loop
+  const S: ClassSpec = { ...S0, paint: { ...S0.paint, hull: strake(S0.paint.hull, 0, 0), band: strake(S0.paint.band, 1, 0), wale: strake(S0.paint.wale, 2, 0) } };
   const L = S.L, B = S.B, H = L / 2;
   const upper = S.decks[S.decks.length - 1];
   const wl = S.draft;
@@ -152,7 +166,11 @@ export function planShip(cls: ShipClass): ShipPlan {
   for (const x of [upper + bul, upper + S.qdH + bul, upper + S.fcH + bul, wl, wl + 0.4, wl + 1.4]) ysSet.add(+x.toFixed(3));
   const Y = [...ysSet].sort((a, b) => a - b);
   const T = 0.16;  // planking + frames
-  const keyAt = (y: number) => y < wl - 0.05 ? TAR : (y >= wl + 0.4 && y < wl + 1.4) ? S.paint.wale : S.gunDecks.some((d) => y >= S.decks[d] + 0.3 && y < S.decks[d] + 1.35) ? S.paint.band : S.paint.hull;
+  // below the waterline: copper sheathing on the big ships (warm copper, streaks of green verdigris), tarred
+  // planking on the small; a black wale; ochre or red bands along the gun decks; the topsides painted
+  const COPPER = ['b07848', 'a87040', '9a6a3e', '6a8a6a', 'b88050'];
+  const keyAt = (y: number, j = 0, i = 0) => y < wl - 0.05 ? (cls === 'brigantine' ? TAR : `color:ffffff|m:0.55|r:0.5|vc:${COPPER[(j * 7 + Math.floor(i / 2) * 3) % COPPER.length]}`)
+    : strake((y >= wl + 0.4 && y < wl + 1.4) ? S0.paint.wale : S.gunDecks.some((d) => y >= S.decks[d] + 0.3 && y < S.decks[d] + 1.35) ? S0.paint.band : S0.paint.hull, j, i);
   const innerKey = (y: number) => y < (S.gunDecks.length ? S.decks[S.gunDecks[0]] : S.decks[1]) - 0.05 ? 'wood:planks|stain:walnut|fin:raw|in:1' : S.paint.inner;
   const v = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
   for (let i = 0; i < X.length - 1; i++) {
@@ -165,16 +183,17 @@ export function planShip(cls: ShipClass): ShipPlan {
       if (inPort(xa, xb, ya, yt)) continue;
       const wa0 = hb(xa, ya), wb0 = hb(xb, ya), wa1 = hb(xa, yt), wb1 = hb(xb, yt);
       if (wa0 + wb0 + wa1 + wb1 < 0.02) continue;
-      const k = keyAt((ya + yt) / 2), ki = innerKey((ya + yt) / 2);
+      const k = keyAt((ya + yt) / 2, j, i), ki = innerKey((ya + yt) / 2);
       const u0 = xa * 0.5, u1 = xb * 0.5, v0 = ya * 0.5, v1 = yt * 0.5;
       for (const s of [1, -1]) {
         // outside skin (CCW seen from outside)
         const a = v(xa, ya, s * wa0), b = v(xb, ya, s * wb0), c = v(xb, yt, s * wb1), d = v(xa, yt, s * wa1);
-        if (s > 0) hull.quad(k, b, a, d, c, [[u1, v0], [u0, v0], [u0, v1], [u1, v1]]); else hull.quad(k, a, b, c, d, [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]);
+        // (CCW seen from outside: the planking faces out; the ceiling inside faces in)
+        if (s > 0) hull.quad(k, a, b, c, d, [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]); else hull.quad(k, b, a, d, c, [[u1, v0], [u0, v0], [u0, v1], [u1, v1]]);
         // inside skin, a frame's thickness in (only where there is room)
         if (ya < S.decks[0] - 0.1) continue;
         const ia = v(xa, ya, s * Math.max(0, wa0 - T)), ib = v(xb, ya, s * Math.max(0, wb0 - T)), ic = v(xb, yt, s * Math.max(0, wb1 - T)), id = v(xa, yt, s * Math.max(0, wa1 - T));
-        if (s > 0) inside.quad(ki, ia, ib, ic, id, [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]); else inside.quad(ki, ib, ia, id, ic, [[u1, v0], [u0, v0], [u0, v1], [u1, v1]]);
+        if (s > 0) inside.quad(ki, ib, ia, id, ic, [[u1, v0], [u0, v0], [u0, v1], [u1, v1]]); else inside.quad(ki, ia, ib, ic, id, [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]);
       }
       void xm;
     }
@@ -193,9 +212,10 @@ export function planShip(cls: ShipClass): ShipPlan {
     hull.box(DARK, p.x, p.y1 + 0.03, zc, portHalf * 2 + 0.08, 0.06, T + 0.06, 2);
     for (const e of [-1, 1]) hull.box(DARK, p.x + e * (portHalf + 0.02), (p.y0 + p.y1) / 2, zc, 0.06, p.y1 - p.y0, T + 0.06, 2);
     if (!p.weather) {
-      hull.push().translate(p.x, p.y1 + 0.02, s * (w1 + 0.02)).rotateX(s * -1.15);
-      hull.box(S.paint.band, 0, 0, s * (p.y1 - p.y0) * 0.5, portHalf * 2, 0.07, p.y1 - p.y0, 1);
-      hull.box(S.paint.inner.replace('|in:1', ''), 0, -0.04 * s, s * (p.y1 - p.y0) * 0.5, portHalf * 2 - 0.06, 0.02, p.y1 - p.y0 - 0.06, 1);
+      // lids triced up nearly level: their red insides show as a thin line, not a wall of red
+      hull.push().translate(p.x, p.y1 + 0.02, s * (w1 + 0.02)).rotateX(s * -1.42);
+      hull.box(strake(S0.paint.hull, 3, Math.round(p.x)), 0, 0, s * (p.y1 - p.y0) * 0.5, portHalf * 2, 0.07, p.y1 - p.y0, 1);
+      hull.box('wood:planks|stain:oxblood|fin:raw|vc:8a5048', 0, -0.04 * s, s * (p.y1 - p.y0) * 0.5, portHalf * 2 - 0.06, 0.02, p.y1 - p.y0 - 0.06, 1);
       hull.pop();
     }
   }
@@ -251,9 +271,65 @@ export function planShip(cls: ShipClass): ShipPlan {
     for (const z of [-wmax * 0.9, 0, wmax * 0.9]) { hull.cyl('brass', sternX - 0.3, sternTop + 0.1, z, 0.04, 0.04, 0.5, 6); hull.ellipsoid('color:ffc070|e:5', sternX - 0.3, sternTop + 0.75, z, 0.17, 0.25, 0.17, 8); lights.push(v(sternX - 0.3, sternTop + 0.75, z)); }
   }
 
+  // ---- carved and gilded work: a figurehead under the bowsprit, head rails, quarter galleries, a gilded
+  // taffrail; the bigger the ship the richer the carving (the brigantine gets a plain billet head)
+  {
+    const rich = cls === 'brigantine' ? 0 : cls === 'frigate' ? 1 : 2;
+    const GOLD = 'gold', yH = top(H) - 1.2, bx = H - 0.3;
+    // figurehead: a crowned lion (or a plain scroll on the brigantine) leaning out over the cutwater
+    hull.push().translate(bx + 0.9, yH - 0.6, 0).rotateZ(-0.5);
+    if (rich) {
+      hull.ellipsoid(GOLD, 0, 0, 0, 0.45, 0.75, 0.42, 12, 0.9);           // body
+      hull.ellipsoid(GOLD, 0.35, 0.75, 0, 0.36, 0.38, 0.36, 12, 0.9);     // head and mane
+      hull.ellipsoid(GOLD, 0.62, 0.72, 0, 0.16, 0.14, 0.16, 8, 0.9);      // muzzle
+      for (const z of [-0.18, 0.18]) hull.ellipsoid(GOLD, 0.25, -0.35, z, 0.14, 0.4, 0.14, 8, 0.9);   // forelegs
+      hull.cyl(GOLD, 0.3, 1.05, 0, 0.2, 0.25, 0.25, 8, true, 1);          // crown
+    } else hull.ellipsoid(S.paint.band, 0, 0, 0, 0.25, 0.6, 0.25, 10, 0.9);
+    hull.pop();
+    // head rails sweeping back from the figurehead to the bow
+    for (const z of [-1, 1]) for (let k = 0; k < 2; k++) {
+      const a = new THREE.Vector3(bx + 1.0, yH - 0.4 - k * 0.6, 0), b = new THREE.Vector3(H - 2.6, yH + 0.6 - k * 0.6, z * (hb(H - 2.6, yH) + 0.1));
+      const d = b.clone().sub(a);
+      hull.push(new THREE.Matrix4().compose(a.clone().add(b).multiplyScalar(0.5), new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(1, 0, 0), d.clone().normalize()), new THREE.Vector3(1, 1, 1)));
+      hull.box(rich ? GOLD : S.paint.band, 0, 0, 0, d.length(), 0.1, 0.1, 2);
+      hull.pop();
+    }
+    if (rich) {
+      // quarter galleries: glazed bays bulging from the sides at the stern, one per upper deck
+      const yTop = upper + S.qdH, levels = cls === 'frigate' ? 1 : 2;
+      for (const z of [-1, 1]) for (let lv = 0; lv < levels; lv++) {
+        const y0g = yTop - 1.9 * (lv + 1) + 0.2, y1g = y0g + 1.6, x0g = -H + 1.2, x1g = -H + 4.6, xg = (x0g + x1g) / 2;
+        const zg = z * (hb(xg, (y0g + y1g) / 2) + 0.35);
+        hull.box(S.paint.band, xg, (y0g + y1g) / 2, zg, x1g - x0g, y1g - y0g, 0.7, 0.6);
+        for (let k = 0; k < 3; k++) { const wx = x0g + 0.6 + k * 1.1; hull.box('glass|c:c8d8d0', wx, (y0g + y1g) / 2 + 0.05, zg + z * 0.36, 0.7, 0.9, 0.02); hull.box(GOLD, wx, (y0g + y1g) / 2 + 0.05, zg + z * 0.37, 0.8, 1.0, 0.01); }
+        hull.box(GOLD, xg, y1g + 0.06, zg, x1g - x0g + 0.2, 0.12, 0.8, 1);
+        hull.box(GOLD, xg, y0g - 0.06, zg, x1g - x0g + 0.2, 0.12, 0.8, 1);
+        hull.push().translate(xg, y0g - 0.5, zg - z * 0.1); hull.ellipsoid(S.paint.band, 0, 0, 0, (x1g - x0g) / 2, 0.5, 0.35, 10, 0.6); hull.pop();
+      }
+      // gilded scrollwork along the taffrail and a carved coat of arms on the transom
+      hull.box(GOLD, -H + 0.25, top(-H) - 0.05, 0, 0.12, 0.25, hb(-H + 0.3, top(-H) - 0.5) * 2, 1);
+      hull.ellipsoid(GOLD, -H + 0.1, top(-H) - 1.1, 0, 0.12, 0.7, 0.9, 12, 0.8);
+      // a gilt moulding along the top of each painted band
+      for (const di of S.gunDecks) for (const z of [-1, 1]) for (let x = -H * 0.8; x < H * 0.75; x += 2) {
+        const y = S.decks[di] + 1.38, w = hb(x + 1, y);
+        if (w > 0.5 && !ports.some((p) => Math.abs(p.x - (x + 1)) < 1.4 && y > p.y0 && y < p.y1 + 0.05)) hull.box(GOLD, x + 1, y, z * (w + 0.015), 2.02, 0.05, 0.03, 2);
+      }
+    }
+  }
+
   // ---- decks ----
-  const hatchXs = [H * 0.18, -H * 0.12].map((x) => +x.toFixed(2));
   const hatchHalfX = 1.1, hatchHalfZ = 0.66;
+  // hatches (and the companion ladders that climb aft-to-fore through them) must keep clear of the masts,
+  // which run right down to the keel: slide each wanted position to the nearest spot with room
+  const mastR = 0.22 + L * 0.006 + 0.15;
+  const hatchOk = (x: number) => S.masts.every((m) => { const mx = m.at * H; return mx < x - hatchHalfX - 1.0 - mastR || mx > x + hatchHalfX + mastR; }) && x > qdX + hatchHalfX + 2.2 && x < fcX - hatchHalfX - 0.6;
+  const hatchXs: number[] = [];
+  for (const want of (cls === 'leviathan' ? [0.3, 0.0, -0.25] : [0.18, -0.12])) {
+    for (let d = 0; d < H; d += 0.25) {
+      const c = [want * H + d, want * H - d].find((x) => hatchOk(x) && hatchXs.every((o) => Math.abs(o - x) > hatchHalfX * 2 + 3));
+      if (c !== undefined) { hatchXs.push(+c.toFixed(2)); break; }
+    }
+  }
   const deckStrip = (key: string, g: GeoBuilder, y: number, xa: number, xb: number, colls: boolean, holes: number[]) => {
     const n = Math.max(1, Math.round((xb - xa) / 1.2));
     for (let i = 0; i < n; i++) {
@@ -388,9 +464,91 @@ export function planShip(cls: ShipClass): ShipPlan {
   // gun decks: hammocks slung between the beams and mess tables between the guns
   for (const di of [...S.gunDecks, ...(S.decks.length > 2 ? [0] : [])]) {
     const y = S.decks[di], yUp = S.decks[di + 1];
-    for (let x = -H * 0.6; x < H * 0.55; x += 2.6) for (const s of [1, -1]) if (hb(x, y + 1) > 2.2) hammocks.push(v(x, yUp - 0.45, s * Math.min(hb(x, y + 1) - 1.6, 2.4)));
+    for (let x = -H * 0.6; x < H * 0.55; x += 2.6) for (const s of [1, -1]) if (hb(x, y + 1) > 2.2) hammocks.push(v(x, yUp - 0.22, s * Math.min(hb(x, y + 1) - 1.6, 2.4)));
   }
   if (S.decks.length === 2) for (let x = -H * 0.3; x < H * 0.4; x += 2.8) hammocks.push(v(x, upper - 0.5, 0));
+
+  // ---- the life below decks: stores, gear and the crew's things (static, merged per material) ----
+  {
+    const IN = '|in:1', BARREL = 'mat:wooden_barrel' + IN, CRATE = 'wood:planks|stain:honey|fin:raw' + IN, SACK = 'cloth:hessian|dye:undyed' + IN;
+    const ROPE = 'cloth:hessian|dye:walnut' + IN, CANVAS = 'cloth:canvas|dye:cream' + IN, IRON = 'iron', BENCH = 'wood:planks|stain:walnut|fin:raw' + IN;
+    let seed = 7; const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    const clear = (x: number, z: number, r: number) =>
+      hatchXs.every((hx) => x < hx - hatchHalfX - 1.3 - r || x > hx + hatchHalfX + 0.4 + r || Math.abs(z) > hatchHalfZ + 0.9 + r) &&
+      S.masts.every((m) => Math.hypot(x - m.at * H, z) > mastR + 0.4 + r);
+    const barrel = (x: number, y: number, z: number, upright = true, sc = 1) => {
+      if (upright) inside.cyl(BARREL, x, y, z, 0.3 * sc, 0.3 * sc, 0.85 * sc, 14, true, 1);
+      else { inside.push().translate(x, y + 0.3 * sc, z).rotateX(Math.PI / 2); inside.cyl(BARREL, 0, -0.42 * sc, 0, 0.3 * sc, 0.3 * sc, 0.85 * sc, 14, true, 1); inside.pop(); }
+    };
+    // the hold and orlop: cask tiers along both sides, crates and sacks, coils of cable, spare sails
+    const storeDecks = [0, ...S.decks.map((_, i) => i).filter((i) => i > 0 && i < S.decks.length - 1 && !S.gunDecks.includes(i))];
+    for (const di of storeDecks) {
+      const y = S.decks[di], room = (S.decks[di + 1] ?? upper) - y;
+      for (let x = -H * 0.62; x < H * 0.6; x += 0.66) for (const sd of [1, -1]) {
+        const w = hb(x, y + 0.5) - 0.45;
+        if (w < 1.2) continue;
+        for (let row = 0; row < (w > 3.5 ? 3 : 2); row++) {
+          const z = sd * (w - row * 0.66);
+          if (!clear(x, z, 0.35) || Math.abs(z) < 1.1) continue;
+          barrel(x, y, z, false);
+          if (room > 1.9 && row === 0 && rnd() < 0.7) barrel(x + 0.33, y + 0.6, z, false);
+        }
+      }
+      // the cask tiers are solid (a few long blocks along each side)
+      for (let x = -H * 0.62; x < H * 0.6; x += 6) for (const sd of [1, -1]) {
+        const w = hb(x + 3, y + 0.5) - 0.45;
+        if (w < 1.6) continue;
+        const depthZ = (w > 3.5 ? 3 : 2) * 0.66;
+        C(v(x + 3, y + 0.45, sd * (w - depthZ / 2 + 0.3)), v(3, 0.45, depthZ / 2), 0.2);
+      }
+      // down the middle: crates, sacks, a cable coil, rolled sails — leaving a gangway at one side
+      for (let x = -H * 0.5; x < H * 0.5; x += 2.4 + rnd() * 1.6) {
+        const z = (rnd() - 0.5) * 0.8;
+        if (!clear(x, z, 1.0)) continue;
+        const kind = Math.floor(rnd() * 4);
+        if (kind === 0) for (let k = 0; k < 3; k++) inside.box(CRATE, x + (k % 2) * 0.62, y + 0.28 + Math.floor(k / 2) * 0.56, z, 0.58, 0.55, 0.58, 1);
+        else if (kind === 1) for (let k = 0; k < 4; k++) inside.ellipsoid(SACK, x + (k % 2) * 0.5, y + 0.2 + (k >> 1) * 0.3, z + (k % 3) * 0.2, 0.28, 0.2, 0.22, 8, 0.8);
+        else if (kind === 2) { for (let k = 0; k < 7; k++) inside.cyl(ROPE, x, y + 0.02 + k * 0.07, z, 0.75 - k * 0.04, 0.75 - k * 0.04, 0.07, 18, false, 1); inside.cyl(ROPE, x, y, z, 0.35, 0.35, 0.5, 12, true, 1); }
+        else { for (let k = 0; k < 3; k++) { inside.push().translate(x, y + 0.2 + k * 0.32, z).rotateX(Math.PI / 2); inside.cyl(CANVAS, 0, -0.9, 0, 0.18, 0.18, 1.8, 10, true, 1); inside.pop(); } }
+      }
+      // the chain pump by the mainmast
+      const mm = S.masts.reduce((a, m) => (m.h > a.h ? m : a), S.masts[0]).at * H;
+      if (clear(mm + 1.4, 0, 0.3)) { inside.cyl('wood:dark|stain:ebony|fin:raw' + IN, mm + 1.4, y, 0, 0.22, 0.22, room - 0.1, 10, true, 2); inside.box(IRON, mm + 1.4, y + 1.0, 0, 0.9, 0.06, 0.06, 2); }
+      // a lantern every few metres
+      for (let x = -H * 0.45; x < H * 0.45; x += 9) { inside.cyl('brass', x, y + room - 0.55, 0.6, 0.09, 0.07, 0.3, 8); inside.ellipsoid('color:ffc070|e:4', x, y + room - 0.42, 0.6, 0.06, 0.09, 0.06, 6); lights.push(v(x, y + room - 0.45, 0.6)); }
+    }
+    // the gun decks: shot garlands along the side, rammers and sponges racked overhead, fire buckets, mess
+    // tables with benches between the guns (with the crew's bowls and tankards), cartridge boxes, lanterns
+    for (const di of S.gunDecks) {
+      const y = S.decks[di], yUp = S.decks[di + 1] ?? upper, dps = ports.filter((p) => p.deck === di).sort((a, b) => a.x - b.x);
+      for (let k = 0; k < dps.length - 1; k++) {
+        const xm = (dps[k].x + dps[k + 1].x) / 2;
+        for (const sd of [1, -1]) {
+          const w = hb(xm, y + 0.6) - 0.3;
+          // shot garland against the side
+          inside.box(BENCH, xm, y + 0.12, sd * (w - 0.1), 0.9, 0.12, 0.16, 2);
+          for (let b2 = 0; b2 < 5; b2++) inside.ellipsoid(IRON, xm - 0.36 + b2 * 0.18, y + 0.24, sd * (w - 0.1), 0.075, 0.075, 0.075, 8);
+          // a mess table slung from the beams between the guns, benches either side
+          if (k % 2 === 0 && w > 2.6) {
+            const tz = sd * (w - 1.35);
+            inside.box(BENCH, xm, y + 0.72, tz, 0.55, 0.05, 1.6, 1);
+            for (const e of [-1, 1]) inside.box(ROPE, xm + e * 0.2, (y + 0.75 + yUp) / 2, tz, 0.015, yUp - y - 0.75, 0.015, 2);
+            for (const e of [-1, 1]) inside.box(BENCH, xm + e * 0.55, y + 0.42, tz, 0.26, 0.05, 1.5, 1);
+            for (let q = 0; q < 4; q++) { const qz = tz - 0.6 + q * 0.4; inside.cyl('wood:planks|stain:honey|fin:oiled' + IN, xm + (q % 2 ? 0.12 : -0.12), y + 0.745, qz, 0.09, 0.07, 0.04, 10); if (q % 2) inside.cyl('pewter', xm - 0.12, y + 0.745, qz + 0.15, 0.04, 0.04, 0.11, 8); }
+          }
+        }
+        // rammers and sponges racked on the beams overhead
+        if (k % 3 === 1) for (const zz of [-0.4, 0.4]) { inside.push().translate(xm, yUp - 0.2, zz).rotateX(Math.PI / 2); inside.cyl('wood:planks|stain:honey|fin:raw' + IN, 0, -1.8, 0, 0.025, 0.025, 3.6, 6, true, 2); inside.pop(); }
+      }
+      // fire buckets and cartridge boxes down the centreline
+      for (let x = -H * 0.5; x < H * 0.5; x += 3.3) {
+        if (!clear(x, 1.1, 0.4)) continue;
+        if ((Math.round(x) & 1) === 0) inside.cyl('wood:planks|stain:honey|fin:raw' + IN, x, y, 1.1, 0.17, 0.14, 0.32, 10, true, 1);
+        else inside.box('wood:planks|stain:oxblood|fin:raw' + IN, x, y + 0.2, 1.1, 0.45, 0.4, 0.35, 1);
+      }
+      for (let x = -H * 0.45; x < H * 0.45; x += 8) { inside.cyl('brass', x, yUp - 0.55, 0, 0.09, 0.07, 0.3, 8); inside.ellipsoid('color:ffc070|e:4', x, yUp - 0.42, 0, 0.06, 0.09, 0.06, 6); lights.push(v(x, yUp - 0.45, 0)); }
+    }
+  }
 
   // ---- the great cabin under the quarterdeck ----
   const cab = { x0: -H + 0.4, x1: qdX - 0.1, y: upper, hw: hb(qdX, upper + 0.5) - T };

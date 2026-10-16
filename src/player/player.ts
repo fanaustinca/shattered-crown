@@ -217,9 +217,10 @@ export class Player {
       this.sprinting = false;
       this.noise = 0.3;
     } else {
-      const canSprint = wantSprint && this.stamina > 1 && fwd > 0 && !this.crouch;
+      // you can run in any direction, but nobody backpedals as fast as they sprint forward
+      const canSprint = wantSprint && this.stamina > 1 && (fwd !== 0 || str !== 0) && !this.crouch;
       this.sprinting = canSprint;
-      let speed = this.crouch ? 1.5 : canSprint ? 6.4 : 3.1;
+      let speed = this.crouch ? 1.5 : canSprint ? (fwd > 0 ? 6.4 : fwd < 0 ? 4.0 : 5.0) : fwd < 0 ? 2.4 : 3.1;
       speed *= (1 - enc * 0.55) * (1 - limp * 0.6) * (this.inWater > 0.5 ? 0.6 : 1);
       if (limp > 0.3) speed *= 0.85 + 0.15 * Math.abs(Math.sin(this.stepPhase)); // hobbling gait
       const target = dir.multiplyScalar(speed);

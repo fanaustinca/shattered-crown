@@ -290,6 +290,7 @@ export class BipedAnimator {
   sit = 0; ride = 0; sleep = 0; carry = 0; eat = 0; dead = 0;
   swingT = -1; swingDir: 'left' | 'right' | 'over' | 'thrust' = 'right';
   private idleStep = [0, 1].map(() => ({ t: -1, from: new THREE.Vector3() }));
+  private swim = 0; private swimPh = 0;
   /** leaning into speed changes and turns; breathlessness after running */
   private lastSpeed = 0; private accLean = 0; private turnLean = 0; private lastYaw = 0; exertion = 0;
   block = 0;
@@ -314,7 +315,7 @@ export class BipedAnimator {
 
   attack(dir: BipedAnimator['swingDir']) { this.swingT = 0; this.swingDir = dir; }
 
-  update(dt: number, st: MoveState & { carry?: boolean; eating?: boolean; sitting?: boolean; riding?: boolean; blocking?: boolean; armed?: boolean }) {
+  update(dt: number, st: MoveState & { carry?: boolean; eating?: boolean; sitting?: boolean; riding?: boolean; blocking?: boolean; armed?: boolean; swimming?: boolean }) {
     const rig = this.rig, root = rig.root, B = rig.byName;
     this.t += dt;
     const speed = st.speed;
@@ -340,6 +341,10 @@ export class BipedAnimator {
     const bob = moving ? Math.cos((this.phase - 0.3) * Math.PI * 4) * 0.018 * (1 - run) - Math.cos((this.phase - duty0 / 2) * Math.PI * 4) * 0.035 * run - run * 0.05 : 0;
     // and the pelvis shifts over whichever foot is bearing the weight
     const sway = moving ? Math.sin((this.phase - 0.05) * Math.PI * 2) * 0.028 * (1 - run * 0.7) : 0;
+    // the way the body is actually travelling (backwards, sideways) — feet step along it, not along the facing
+    const vx = st.vel?.x ?? 0, vz = st.vel?.z ?? 0, vl = Math.hypot(vx, vz);
+    const travel = vl > 0.3 ? Math.atan2(vx, vz) : st.yaw;
+    const fwdness = Math.cos(travel - st.yaw);          // 1 forwards, -1 backwards, 0 sideways
     const limpDrop = this.limp * Math.max(0, Math.sin(this.phase * Math.PI * 2)) * 0.06;
     root.position.set(st.pos.x, (st.ridden || st.riding ? st.pos.y : Math.max(gy, st.pos.y)) + bob - limpDrop - this.sit * 0.48 * (1 - this.ride) - this.sleep * 0.85 - this.dead * 0.85, st.pos.z);
     root.position.x += Math.cos(st.yaw) * sway; root.position.z -= Math.sin(st.yaw) * sway;
@@ -350,6 +355,41 @@ export class BipedAnimator {
     root.getWorldQuaternion(this.modelQ);
     for (const b of rig.bones) b.quaternion.identity();
     const E = (x: number, y: number, z: number) => _q.setFromEuler(new THREE.Euler(x, y, z, 'YXZ'));
+    // ---- swimming: lying along the surface, a front crawl (or treading water when still) ----
+    this.swim += ((st.swimming ? 1 : 0) - this.swim) * Math.min(1, dt * 4);
+    if (this.swim > 0.5) {
+      const mv = Math.min(1, speed / 1.2);
+      this.swimPh = (this.swimPh + dt * (0.45 + speed * 0.35)) % 1;
+      const ph = this.swimPh * Math.PI * 2;
+      // the body: horizontal and rolling with the stroke when swimming, upright and bobbing when treading water
+      // the feet trail behind: the head (not the feet) stays where the swimmer is
+      root.position.set(st.pos.x - Math.sin(st.yaw) * 1.45 * mv, st.pos.y + 1.2 * mv + Math.sin(ph * 2) * 0.03, st.pos.z - Math.cos(st.yaw) * 1.45 * mv);
+      root.rotation.set(0, st.yaw, 0);
+      root.rotateX(1.32 * mv);
+      root.rotateZ(Math.sin(ph) * 0.35 * mv);
+      root.updateMatrixWorld(true);
+      B.neck.quaternion.copy(E(-0.7 * mv, Math.sin(ph) * -0.25 * mv, 0));
+      B.head.quaternion.copy(E(-0.35 * mv, Math.sin(ph) * -0.2 * mv, 0));
+      for (const sd of [1, -1]) {
+        const n = sd > 0 ? 'L' : 'R', a = ph + (sd > 0 ? 0 : Math.PI);
+        if (mv > 0.3) {
+          // crawl: reach forward over the head, pull down and back past the hip, recover out of the water
+          B['arm' + n].quaternion.copy(E(-Math.PI + (a % (Math.PI * 2)) * 1.0, 0, sd * (0.25 + Math.max(0, Math.sin(a)) * 0.5)));
+          B['fore' + n].quaternion.copy(E(-0.25 - Math.max(0, Math.cos(a)) * 0.6, 0, 0));
+        } else {
+          // treading water: sculling arms out to the sides
+          B['arm' + n].quaternion.copy(E(-0.3 + Math.sin(ph * 2) * 0.15, Math.sin(ph * 2 + sd) * 0.4, sd * 1.0));
+          B['fore' + n].quaternion.copy(E(-0.6, 0, 0));
+        }
+        // flutter kick (or an eggbeater kick treading water)
+        const k = Math.sin(ph * 3 + (sd > 0 ? 0 : Math.PI));
+        B['thigh' + n].quaternion.copy(mv > 0.3 ? E(k * 0.3, 0, sd * 0.05) : E(-0.6 + k * 0.25, 0, sd * 0.35));
+        B['shin' + n].quaternion.copy(mv > 0.3 ? E(0.15 + Math.max(0, -k) * 0.35, 0, 0) : E(1.2 + k * 0.3, 0, 0));
+        if (B['foot' + n]) B['foot' + n].quaternion.copy(E(mv > 0.3 ? 0.9 : 0.4, 0, 0));
+      }
+      this.init = true;
+      return;
+    }
     // torso: lean forward when running, counter-rotate shoulders against hips; at rest the weight shifts slowly
     // from foot to foot and the chest rises with each breath
     const sw = Math.sin(this.phase * Math.PI * 2);
@@ -364,7 +404,7 @@ export class BipedAnimator {
     this.exertion = THREE.MathUtils.clamp(this.exertion + (run > 0.5 ? dt * 0.08 : -dt * 0.04), 0, 1);
     B.hips.quaternion.copy(E(0, sw * 0.09 * Math.min(1, speed), this.limp * sw * 0.06 + shift + this.turnLean * 0.6));
     const puff = breath * (0.008 + this.exertion * 0.03 * still);
-    B.spine.quaternion.copy(E(run * 0.26 + this.accLean + this.carry * -0.05 + puff + this.exertion * 0.12 * still, -sw * 0.07 * Math.min(1, speed), -shift * 0.7 + this.turnLean * 0.4));
+    B.spine.quaternion.copy(E(run * (0.26 * Math.max(0, fwdness) - 0.08 * Math.max(0, -fwdness)) + this.accLean * fwdness + this.carry * -0.05 + puff + this.exertion * 0.12 * still, -sw * 0.07 * Math.min(1, speed), -shift * 0.7 + this.turnLean * 0.4));
     B.chest.quaternion.copy(E(run * 0.06 - breath * 0.012, -sw * 0.1 * Math.min(1, speed), -shift * 0.4));
     // idle fidgets (only standing about, hands free)
     const free = !moving && this.carry < 0.1 && this.eat < 0.1 && this.sit < 0.1 && this.ride < 0.1 && this.sleep < 0.1 && this.dead < 0.1 && !st.armed && this.block < 0.1 && this.swingT < 0;
@@ -490,7 +530,7 @@ export class BipedAnimator {
         if (!this.swinging[i]) { this.swinging[i] = true; this.from[i].copy(this.planted[i]); }
         // a walker lands the foot well ahead; a runner lands it nearly under the hips and pushes off behind
         const stride = speed / Math.max(freq, 0.1) * duty * (0.5 - run * 0.18);
-        this.to[i].set(home.x + Math.sin(st.yaw) * stride, 0, home.z + Math.cos(st.yaw) * stride);
+        this.to[i].set(home.x + Math.sin(travel) * stride, 0, home.z + Math.cos(travel) * stride);
         this.to[i].y = this.ground(this.to[i].x, this.to[i].z);
         // running: the heel kicks up behind first, then the knee drives through and the foot reaches
         // forward and comes down; walking: a low, even arc
@@ -517,6 +557,9 @@ export class BipedAnimator {
         }
         F = this.planted[i].clone();
       }
+      // never reach for a surface far above or below the body (a step, not a table top or a hole)
+      const baseY = (st.ridden || st.riding ? st.pos.y : Math.max(gy, st.pos.y));
+      F.y = THREE.MathUtils.clamp(F.y, baseY - 0.45, baseY + 0.5);
       const ankle = F.clone(); ankle.y += this.footH * this.heightScale;
       const A = thigh.getWorldPosition(new THREE.Vector3());
       const pole = new THREE.Vector3(Math.sin(st.yaw), 0, Math.cos(st.yaw));

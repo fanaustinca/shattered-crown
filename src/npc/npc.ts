@@ -221,6 +221,15 @@ export class NPC {
     } else {
       // scheduled life: follow the path toward where the schedule says we should be
       if (this.path.length) {
+        // soldiers on the move: if a house, a wall or water lies across the way to the next waypoint, find a
+        // way round it first (gates, bridges)
+        if ((this as unknown as { side?: string }).side && this.path[0] !== this.navChecked) {
+          this.navChecked = this.path[0];
+          if (this.path[0].distanceTo(st.pos) > 9 && !g.nav.clear(st.pos, this.path[0])) {
+            const r = g.nav.route(st.pos, this.path[0]);
+            if (r && r.length > 1) { this.path.splice(0, 1, ...r); this.navChecked = this.path[0]; }
+          }
+        }
         goal = this.path[0];
         const d = Math.hypot(goal.x - st.pos.x, goal.z - st.pos.z);
         if (d < (this.path.length === 1 ? 0.7 : 0.45)) { this.path.shift(); goal = this.path[0] ?? null; }
@@ -260,7 +269,7 @@ export class NPC {
     st.speed += (speed - st.speed) * Math.min(1, dt * 4);
     const t = this.collider.translation();
     this.vy -= 9.81 * dt;
-    const desired = { x: Math.sin(st.yaw) * st.speed * dt, y: this.vy * dt, z: Math.cos(st.yaw) * st.speed * dt };
+    const desired = { x: Math.sin(st.yaw) * st.speed * dt + this.sep.x * dt, y: this.vy * dt, z: Math.cos(st.yaw) * st.speed * dt + this.sep.z * dt };
     // movement LOD: residents far from the player resolve collisions every third step (with the motion
     // accumulated in between and shown as a prediction); nothing about their route or pace changes
     const far = !this.hostile && !this.fightTarget && st.pos.distanceToSquared(p.pos) > 32 * 32;
@@ -329,6 +338,9 @@ export class NPC {
   chkPos = new THREE.Vector3(1e9, 0, 0);
   noProgress = false;
   holdAt: THREE.Vector3 | null = null;
+  /** separation push from people around (m/s), so nobody walks through anybody */
+  sep = new THREE.Vector3();
+  private navChecked: THREE.Vector3 | null = null;
   /** where the danger is that we're running from (null: the player) */
   fleeFrom: THREE.Vector3 | null = null;
 }

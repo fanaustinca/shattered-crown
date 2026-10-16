@@ -46,7 +46,7 @@ export function seaHeight(x: number, z: number, t: number, amp: number, rot = wa
     for (const [dx0, dz0, st, L] of set) {
       const dx = dx0 * cr - dz0 * sr, dz = dx0 * sr + dz0 * cr;
       const l = Math.hypot(dx, dz), k = (2 * Math.PI) / L, c = Math.sqrt(9.8 / k);
-      const a = (st / k) * A;
+      const a = (st / k) * (set === WAVES && L < 12 ? Math.min(A, 1) : A);
       y += a * Math.sin(k * ((dx / l) * x + (dz / l) * z) - c * k * t * 1.0);
     }
   }
@@ -115,16 +115,22 @@ void main() {
     float dist = distance(p.xz, cameraPosition.xz);
     float amp = uWaveAmp * smoothstep(0.0, 7.0, depth) * (1.0 - smoothstep(1500.0, 5000.0, dist));
     vec3 disp = vec3(0.0); vec3 tx = vec3(1.0, 0.0, 0.0), tz = vec3(0.0, 0.0, 1.0);
+    // short chop saturates (it breaks into foam rather than growing), and the horizontal Gerstner pull is
+    // scaled so the summed steepness never folds a crest over itself (that read as glitchy, racing water)
+    float qsum = 0.0;
+    for (int i = 0; i < NW; i++) qsum += WV[i].z * (WV[i].w < 12.0 ? min(amp, 1.0) : amp);
+    float hs = min(0.8, 0.62 / max(qsum, 1e-3));
     for (int i = 0; i < NW; i++) {
       vec2 d = mat2(cos(uWaveRot), sin(uWaveRot), -sin(uWaveRot), cos(uWaveRot)) * normalize(WV[i].xy);
       float k = 6.2831853 / WV[i].w, c = sqrt(9.8 / k);
-      float a = WV[i].z / k * amp;
+      float ai = WV[i].w < 12.0 ? min(amp, 1.0) * (1.0 - smoothstep(120.0, 400.0, dist)) : amp;
+      float a = WV[i].z / k * ai;
       float f = k * (dot(d, p.xz) - c * uTime);
       float s = sin(f), co = cos(f);
-      disp += vec3(d.x * a * co, a * s, d.y * a * co) * vec3(0.8, 1.0, 0.8);
-      tx += vec3(-d.x * d.x * WV[i].z * amp * s * 0.8, d.x * WV[i].z * amp * co, -d.x * d.y * WV[i].z * amp * s * 0.8);
-      tz += vec3(-d.x * d.y * WV[i].z * amp * s * 0.8, d.y * WV[i].z * amp * co, -d.y * d.y * WV[i].z * amp * s * 0.8);
-      vCrest += max(0.0, s) * WV[i].z * amp;
+      disp += vec3(d.x * a * co, a * s, d.y * a * co) * vec3(hs, 1.0, hs);
+      tx += vec3(-d.x * d.x * WV[i].z * ai * s * hs, d.x * WV[i].z * ai * co, -d.x * d.y * WV[i].z * ai * s * hs);
+      tz += vec3(-d.x * d.y * WV[i].z * ai * s * hs, d.y * WV[i].z * ai * co, -d.y * d.y * WV[i].z * ai * s * hs);
+      vCrest += max(0.0, s) * WV[i].z * ai;
     }
     // the long swell, building offshore
     float sa = uSwell * smoothstep(6.0, 40.0, depth) * (1.0 - smoothstep(3000.0, 9000.0, dist));
@@ -134,7 +140,7 @@ void main() {
       float a = SV[i].z / k * sa;
       float f = k * (dot(d, p.xz) - c * uTime);
       float s = sin(f), co = cos(f);
-      disp += vec3(d.x * a * co, a * s, d.y * a * co) * vec3(0.8, 1.0, 0.8);
+      disp += vec3(d.x * a * co, a * s, d.y * a * co) * vec3(0.5, 1.0, 0.5);
       tx += vec3(-d.x * d.x * SV[i].z * sa * s * 0.8, d.x * SV[i].z * sa * co, -d.x * d.y * SV[i].z * sa * s * 0.8);
       tz += vec3(-d.x * d.y * SV[i].z * sa * s * 0.8, d.y * SV[i].z * sa * co, -d.y * d.y * SV[i].z * sa * s * 0.8);
       vCrest += max(0.0, s) * SV[i].z * sa * 0.6;

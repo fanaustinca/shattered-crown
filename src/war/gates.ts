@@ -135,7 +135,7 @@ export class Gates {
       if (gt.defenders.some((d) => d.alive && (d as Soldier & { post?: THREE.Vector3 }).post === w.pos)) continue;
       const s = war.spawnSoldier(gt.side!, w.pos.clone().setY(w.pos.y + 0.05), true);
       s.order = 'hold'; s.holdAt = w.pos.clone();
-      s.archer = true; s.musket = Math.random() < (gt.side === 'ironreach' ? 0.5 : 0.3);
+      s.archer = true; s.musket = Math.random() < (gt.side === 'ironreach' ? 0.25 : 0.15);
       s.volleyT = 2 + Math.random() * 5;
       (s as Soldier & { post?: THREE.Vector3; wallOut?: THREE.Vector3 }).post = w.pos;
       (s as Soldier & { post?: THREE.Vector3; wallOut?: THREE.Vector3 }).wallOut = w.out;

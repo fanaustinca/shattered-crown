@@ -1,5 +1,18 @@
 // What's new, newest first (shown in Help → What's new).
 export const CHANGELOG: { v: string; date: string; items: string[] }[] = [
+  { v: '0.7.0', date: '2026-10-16', items: [
+    'Warships repainted and rebuilt outside: the hull planking was facing the wrong way, so from outside you were seeing the red-painted inside of the hull. Now they wear proper paint — black with ochre bands along the gun decks on the frigates and men-o\'-war, black and red on the Leviathan, every strake a slightly different tone — with copper sheathing below the waterline, a gilded lion figurehead and head rails, glazed quarter galleries at the stern and gilt mouldings.',
+    'Below decks is lived in: cask tiers along both sides of the hold and orlop, crates, sacks, coils of cable and spare sails, a chain pump, shot garlands and racked rammers on the gun decks, mess tables slung between the guns with bowls and tankards, fire buckets and cartridge boxes, and lanterns along every deck.',
+    'Hammocks are real canvas slings now, gathered to clews and hung from the beams by a fan of lines.',
+    'Fixed: the Leviathan\'s (and the brigantine\'s) hatches and companion ladders were blocked by the masts; hatches now always keep clear of them.',
+    'Rowing boats float properly (they were riding a metre too deep and looked sunk).',
+    'Waves: the short chop no longer races and folds over itself in a strong wind.',
+    'Horses: hold W to ride on at a walk and tap Shift to go up a gait (trot, canter, gallop), Ctrl to come down one; let go of W to stop. (Before, every tap of W stepped her up a gait.)',
+    'You can sprint in any direction (slower backwards and sideways), and walking backwards no longer sends your feet flailing: they step the way you are actually moving.',
+    'Feet no longer reach for table tops, bunks or guns in tight spaces: the foot IK only finds steps near your own height.',
+    'Swimming: a proper front crawl when moving and treading water when still, instead of standing tilted in the water.',
+    'Battles: soldiers no longer climb on top of each other (the tall towers of men) — everyone keeps a body\'s width apart; troops route around houses and walls and over bridges instead of through them; far fewer musketeers.',
+  ] },
   { v: '0.6.0', date: '2026-10-15', items: [
     'The war never stops: every front is fought out of sight around the clock — each side loses men in proportion to the other\'s numbers, the barracks feed in fresh troops, and the line drifts toward the weaker side (the journal shows the numbers and who is gaining).',
     'Barracks train battalions without end: twenty to thirty men form up outside, drums beating, and march down the roads to the front — you\'ll meet them as you travel.',

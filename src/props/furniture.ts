@@ -493,20 +493,40 @@ const HAMMOCKS: Record<string, Design> = {
   canvas(g, m, out) { hammock(g, m, out, 'cloth:canvas|dye:undyed'); },
   net(g, m, out) { hammock(g, m, out, `cloth:hessian|dye:${m.dye}`); },
 };
-function hammock(g: GeoBuilder, _m: Mods, out: FurnitureModel, key: string) {
-  // the sling hangs from two hooks; the hammock entity swings the whole part about the hook line
+function hammock(g: GeoBuilder, m: Mods, out: FurnitureModel, key: string) {
+  // a canvas sling: gathered to a clew at each end, sagging in the middle with its edges curled up, hung from
+  // hooks in the beams by a fan of clew lines. The hammock entity swings the whole sling about the hook line.
   const sg = new GeoBuilder();
-  const L = 2.0, n = 12;
-  for (let i = 0; i < n; i++) {
-    const t0 = i / n, t1 = (i + 1) / n;
-    const sag = (t: number) => -Math.sin(t * Math.PI) * 0.45;
-    sg.push().translate(-L / 2 + t0 * L, sag(t0), 0);
-    sg.box(key, (t1 - t0) * L / 2, (sag(t1) - sag(t0)) / 2, 0, (t1 - t0) * L + 0.01, 0.01, 0.7 * Math.sin(0.25 + t0 * 2.6), 1);
-    sg.pop();
+  const L = 2.3, clew = 0.42, n = 14, k = 6;
+  const pt = (u: number, v: number) => {
+    const s = Math.sin(Math.PI * u);
+    const w = 0.4 * Math.pow(s, 0.55);
+    return new THREE.Vector3(-L / 2 + clew + u * (L - 2 * clew), -0.5 * Math.pow(s, 0.85) + 0.16 * v * v * s, v * w);
+  };
+  for (let i = 0; i < n; i++) for (let j = 0; j < k; j++) {
+    const u0 = i / n, u1 = (i + 1) / n, v0 = -1 + (2 * j) / k, v1 = -1 + (2 * (j + 1)) / k;
+    const a = pt(u0, v0), b = pt(u1, v0), c = pt(u1, v1), d = pt(u0, v1);
+    sg.quad(key, a, b, c, d, [[u0 * 1.5, v0 * 0.4], [u1 * 1.5, v0 * 0.4], [u1 * 1.5, v1 * 0.4], [u0 * 1.5, v1 * 0.4]]);
+    sg.quad(key, b, a, d, c, [[u1 * 1.5, v0 * 0.4], [u0 * 1.5, v0 * 0.4], [u0 * 1.5, v1 * 0.4], [u1 * 1.5, v1 * 0.4]]);
   }
-  g.box('iron', -L / 2 - 0.15, 0, 0, 0.04, 0.04, 0.04, 3); g.box('iron', L / 2 + 0.15, 0, 0, 0.04, 0.04, 0.04, 3);
-  out.movables.push({ kind: 'curtain', geo: sg, pivot: new THREE.Vector3(0, 0, 0), axis: new THREE.Vector3(1, 0, 0), range: 0.5, size: new THREE.Vector3(L, 0.5, 0.7) });
-  out.sleep!.push({ pos: new THREE.Vector3(0, -0.35, 0), yaw: Math.PI / 2 });
+  // the clew lines fanning from the hook to the gathered ends
+  const line = (a: THREE.Vector3, b: THREE.Vector3) => {
+    const d = b.clone().sub(a), len = d.length();
+    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.normalize());
+    sg.push(new THREE.Matrix4().compose(a, q, new THREE.Vector3(1, 1, 1)));
+    sg.cyl('cloth:hessian|dye:walnut', 0, 0, 0, 0.007, 0.007, len, 4, false, 2);
+    sg.pop();
+  };
+  for (const e of [-1, 1]) {
+    const hook = new THREE.Vector3(e * (L / 2), 0.02, 0);
+    for (let j = 0; j <= 4; j++) { const v = -1 + j / 2; const p = pt(e < 0 ? 0.02 : 0.98, v); line(hook, p); }
+    sg.ellipsoid('iron', hook.x, hook.y, 0, 0.03, 0.03, 0.03, 6);
+  }
+  // a rolled blanket in some, a sleeper's dent in others
+  if (m.seed % 3 === 0) { sg.push().translate(0.15, -0.36, 0).rotateZ(Math.PI / 2); sg.cyl(`cloth:wool|dye:${m.dye}`, 0, -0.3, 0, 0.1, 0.1, 0.6, 10, true, 1); sg.pop(); }
+  g.box('iron', -L / 2 - 0.02, 0.05, 0, 0.05, 0.1, 0.05, 3); g.box('iron', L / 2 + 0.02, 0.05, 0, 0.05, 0.1, 0.05, 3);
+  out.movables.push({ kind: 'curtain', geo: sg, pivot: new THREE.Vector3(0, 0, 0), axis: new THREE.Vector3(1, 0, 0), range: 0.5, size: new THREE.Vector3(L, 0.55, 0.8) });
+  out.sleep!.push({ pos: new THREE.Vector3(0, -0.4, 0), yaw: Math.PI / 2 });
 }
 
 const MISC: Record<string, Design> = {

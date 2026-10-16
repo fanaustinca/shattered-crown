@@ -129,6 +129,8 @@ export class Ship implements Interactable {
   }
   /** fraction of normal buoyancy (falls as a holed ship fills) */
   buoyScale = 1;
+  /** buoyancy spring: how much of the ship's weight each metre of immersion carries */
+  buoyK = 1.05;
   dispose() {
     this.root.removeFromParent();
     this.game.physics.removeBody(this.body);
@@ -187,7 +189,7 @@ export class Ship implements Interactable {
       this.lamps = plan.lights;
       for (let i = 0; i < plan.hammocks.length; i++) {
         const hp = plan.hammocks[i];
-        const fm = makeFurniture('hammock', i % 2 ? 'net' : 'canvas', modsFor(i * 31 + 7));
+        const fm = makeFurniture('hammock', 'canvas', modsFor(i * 31 + 7));
         const node = new FurnitureNode(fm);
         node.group.position.copy(hp);
         node.group.rotation.y = Math.PI / 2;
@@ -223,7 +225,9 @@ export class Ship implements Interactable {
     C(this.length * 0.42, 0.12, this.beam * 0.32, 0, 0.12, 0, this.mass * 0.9);
     C(this.length * 0.45, 0.04, this.beam * 0.4, 0, 0.2, 0, this.mass * 0.05);
     for (const s of [-1, 1]) C(this.length * 0.45, 0.2, 0.05, 0, 0.35, s * this.beam * 0.42, 5);
-    for (let i = 0; i < 4; i++) for (const s of [-1, 1]) this.buoy.push(new THREE.Vector3(hb.min.x + (i + 0.5) / 4 * this.length, this.waterline - 0.6, s * this.beam * 0.3));
+    for (let i = 0; i < 4; i++) for (const s of [-1, 1]) this.buoy.push(new THREE.Vector3(hb.min.x + (i + 0.5) / 4 * this.length, 0, s * this.beam * 0.3));
+    // a light, beamy boat rides high: a stiff spring (a few cm of immersion carries her weight)
+    this.buoyK = 4.5;
     this.wheel = new THREE.Object3D();
     this.wheel.position.set(-0.5, 0.15 + 1.05, 0);
     this.root.add(this.wheel);
@@ -367,7 +371,7 @@ export class Ship implements Interactable {
       const depth = wl - wp.y;
       if (depth > 0) {
         submergedPts++;
-        const f = Math.min(depth, 2.5) * m * 9.81 / this.buoy.length * 1.05 * this.buoyScale;
+        const f = Math.min(depth, 2.5 / this.buoyK * 1.05) * m * 9.81 / this.buoy.length * this.buoyK * this.buoyScale;
         b.applyImpulseAtPoint({ x: 0, y: f * dt, z: 0 }, wp, true);
         // water drag at that point
         const lv0 = b.linvel(), av0 = b.angvel();

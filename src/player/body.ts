@@ -16,7 +16,7 @@ export class PlayerBody {
   weapon: THREE.Object3D | null = null;
   constructor(public game: Game) {
     this.rig = game.creatures.instance('human0', { coat: 0, cloth1: 0x4a3a2a, cloth2: 0x3a3a30, boots: 0x2a1a10, skin: 0xd8a888, hair: 0x3a2414, belt: 0x2a1a0a });
-    this.anim = new BipedAnimator(this.rig, (x, z) => game.groundAt(x, z, game.player.pos.y + 1));
+    this.anim = new BipedAnimator(this.rig, (x, z) => game.groundAt(x, z, game.player.pos.y - 0.05));   // from knee height: not tables, bunks or guns
     game.scene.add(this.rig.root);
   }
   setPose(p: PlayerBody['pose']) { this.pose = p; }
@@ -45,12 +45,11 @@ export class PlayerBody {
     const planar = Math.hypot(p.vel.x, p.vel.z);
     this.anim.limp = p.limp;
     this.anim.update(dt, {
-      pos, yaw: bodyYaw, speed: p.mode === 'seat' ? 0 : p.mode === 'swim' ? 0 : planar, turn: 0, vel: p.vel,
+      pos, yaw: bodyYaw, speed: p.mode === 'seat' ? 0 : planar, swimming: p.mode === 'swim', turn: 0, vel: p.vel,
       action: p.mode === 'dead' ? 'dead' : this.pose === 'sleep' ? 'sleep' : 'idle',
       look, carry: !!g.interaction.held, eating: this.eatT > 0, sitting: this.pose === 'sit', riding: !!g.mount, armed: !!g.combat.drawn,
       blocking: g.combat.blocking,
     } as never);
-    if (p.mode === 'swim') { this.rig.root.rotation.x = -1.2; this.rig.root.updateMatrixWorld(true); }
     // hide the head in first person
     this.rig.byName.head.scale.setScalar(fp ? 0.001 : 1);
     this.rig.byName.neck.scale.setScalar(fp ? 0.6 : 1);

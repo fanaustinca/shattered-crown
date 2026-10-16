@@ -116,9 +116,13 @@ export class Animal implements Seat {
   /** the rider's view rocks with the gait (a little less than the horse: the rider's body absorbs some) */
   sway() { const r = (this.anim as { rock?: { pitch: number; roll: number } }).rock; return r ? { pitch: r.pitch * 0.45, roll: -r.roll * 0.5 } : { pitch: 0, roll: 0 }; }
   drive(input: Input, dt: number) {
-    if (input.hit('KeyW')) this.speedCmd = Math.min(4, this.speedCmd + 1);
-    if (input.hit('KeyS')) this.speedCmd = Math.max(-1, this.speedCmd - 1);
-    if (input.key('ShiftLeft') && input.key('KeyW')) this.speedCmd = 4;
+    // hold W to ride on (a walk to begin with); tap Shift to urge her up a gait — trot, canter, gallop — and
+    // Ctrl to rein back one; let go of W and she eases to a halt; S backs her up
+    if (input.key('KeyW')) {
+      if (this.speedCmd < 1) this.speedCmd = 1;
+      if (input.hit('ShiftLeft') || input.hit('ShiftRight')) this.speedCmd = Math.min(4, this.speedCmd + 1);
+      if (input.hit('ControlLeft') || input.hit('KeyC')) this.speedCmd = Math.max(1, this.speedCmd - 1);
+    } else this.speedCmd = input.key('KeyS') ? -1 : 0;
     const turn = (input.key('KeyA') ? 1 : 0) - (input.key('KeyD') ? 1 : 0);
     const speeds = [0, this.spec.walk * 1.1, this.spec.walk * 2.4, this.spec.run * 0.6, this.spec.run];
     const want = this.speedCmd < 0 ? -0.8 : speeds[this.speedCmd];

@@ -43,6 +43,7 @@ import { Naval } from './war/naval';
 import { TravelPosts } from './world/posts';
 import { Gates } from './war/gates';
 import { Ragdolls } from './creature/ragdoll';
+import { Nav } from './npc/nav';
 import { Destruction } from './war/destruct';
 import { ClothSystem } from './render/cloth';
 
@@ -148,6 +149,7 @@ export class Game {
   posts = new TravelPosts(this);
   gates = new Gates(this);
   ragdolls = new Ragdolls(this);
+  nav = new Nav(this);
   destruct = new Destruction(this);
   private clothDt = 0;
   cloth!: ClothSystem;
@@ -468,6 +470,7 @@ export class Game {
     // substeps below then carry them to their new poses); only dynamic bodies need the fixed-rate loop
     const aiDt = Math.min(simDt, 0.1);
     this.fauna.step(aiDt);
+    this.nav.separate([...this.residents.live, ...this.war.soldiers.filter((s) => !s.horse)]);
     this.residents.step(aiDt);
     this.talk.update(aiDt);
     this.naval.update(aiDt);
