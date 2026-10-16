@@ -564,6 +564,23 @@ export class Game {
     this.hud.toast(`After ${hours < 1 ? Math.round(hours * 60) + ' minutes' : hours.toFixed(1) + ' hours'} on the road you reach ${plan.site.name}.`);
   }
 
+  /** Instant travel (god mode): onto dry land at (x, z), the world streamed in around you. */
+  teleportTo(x: number, z: number) {
+    // out at sea or in the river? step to the nearest shore
+    let px = x, pz = z;
+    for (let r = 0; r < 600 && this.world.waterLevelAt(px, pz) > this.world.heightAt(px, pz) - 0.3; r += 8) {
+      let found = false;
+      for (let a = 0; a < 16 && !found; a++) { const qx = x + Math.cos(a * 0.39) * r, qz = z + Math.sin(a * 0.39) * r; if (this.world.waterLevelAt(qx, qz) <= this.world.heightAt(qx, qz) - 0.3) { px = qx; pz = qz; found = true; } }
+      if (found) break;
+    }
+    if (this.player.seat) this.player.standUp();
+    this.player.spawn(px, pz);
+    this.residents.update(settings.simRadius);
+    this.settlements.update(this.player.pos, 6);
+    this.lighting.forceShadows = true;
+    this.hud.toast(`Teleported to ${Math.round(px)}, ${Math.round(pz)}.`);
+  }
+
   respawn() {
     const s = nearestSite(this.player.pos.x, this.player.pos.z).site;
     const p = this.settlements.towns.plans.find((pl) => pl.site.id === s.id)!;

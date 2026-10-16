@@ -15,6 +15,10 @@ export interface BuildingSpec {
   id: string; type: BType; style: Style; w: number; d: number; floors: number; seed: number;
   roof: 'thatch' | 'tile' | 'slate' | 'shingle'; jetty: boolean; kingdom: 'vanguardia' | 'ironreach' | 'river' | 'isles';
   wealth: number; // 0 poor .. 1 rich
+  /** an L-shaped plan: a lower rear wing on one side */
+  wing?: { side: 1 | -1; w: number; d: number };
+  /** a flagpole on the gable flying the kingdom's colours */
+  flag?: boolean;
 }
 export interface BuildingModel {
   spec: BuildingSpec;
@@ -25,6 +29,7 @@ export interface BuildingModel {
   rooms: Room[];
   hearths: THREE.Vector3[];       // fire positions (lights, warmth)
   chimneys: THREE.Vector3[];      // smoke emitters
+  bell?: THREE.Vector3;
   windows: { pos: THREE.Vector3; normal: THREE.Vector3 }[];
   stairs: { from: THREE.Vector3; to: THREE.Vector3 }[];
   height: number;
@@ -54,7 +59,7 @@ function mats(s: BuildingSpec) {
     wallOut, ground, roof, inner: s.wealth > 0.6 ? 'mat:clay_plaster|in:1' : 'mat:white_plaster_rough_01|tint:e8dcc4|in:1', timber: 'wood:dark|stain:ebony|fin:raw',
     floor: s.wealth > 0.5 ? 'mat:old_wood_floor' : s.type === 'stable' || s.type === 'barn' || s.type === 'smithy' ? 'mat:clay_floor_001' : 'mat:plank_flooring_02',
     stoneFloor: 'mat:monastery_stone_floor', beam: 'wood:dark|stain:walnut|fin:raw', plinth: 'mat:stacked_stone_wall', roofIn: 'wood:planks|stain:walnut|fin:raw',
-    frame, glass: 'glass|c:b8c8b0', shutter: s.kingdom === 'ironreach' ? 'wood:weathered|stain:ebony|fin:raw' : 'mat:wood_shutter',
+    frame, glass: 'leaded|c:b8c8b0', shutter: s.kingdom === 'ironreach' ? 'wood:weathered|stain:ebony|fin:raw' : 'mat:wood_shutter',
     chimney: 'mat:stacked_stone_wall|wx:1.2', hearth: 'mat:castle_brick_07',
   };
 }
@@ -118,7 +123,13 @@ export function generateBuilding(spec: BuildingSpec): BuildingModel {
       const openings: { x0: number; x1: number; y0: number; y1: number }[] = [];
       if (f === 0 && S.side === 's') {
         if (open) openings.push({ x0: 0.5, x1: S.len - 0.5, y0: 0, y1: fh - 0.5 });
-        else openings.push({ x0: S.len / 2 - doorW / 2, x1: S.len / 2 + doorW / 2, y0: 0, y1: doorH });
+        else if (spec.type === 'shop' && S.len >= 6.5) {
+          // a medieval shop front: the door to one side, and a wide unglazed opening whose lower shutter
+          // folds down into the counter and whose upper shutter props up as an awning
+          const dx = S.len * 0.76;
+          openings.push({ x0: dx - doorW / 2, x1: dx + doorW / 2, y0: 0, y1: doorH });
+          openings.push({ x0: 0.7, x1: dx - doorW / 2 - 0.55, y0: 0.85, y1: 2.15, shop: true } as never);
+        } else openings.push({ x0: S.len / 2 - doorW / 2, x1: S.len / 2 + doorW / 2, y0: 0, y1: doorH });
       }
       if (f === 0 && S.side === 'n' && (spec.type === 'tavern' || spec.type === 'stable' || spec.type === 'barn' || (w > 9 && r() < 0.5))) openings.push({ x0: S.len * 0.7 - 0.5, x1: S.len * 0.7 + 0.5, y0: 0, y1: 2.1 });
       // windows every ~2.4 m, skipping doors, the hearth wall and the stair run
@@ -145,12 +156,26 @@ export function generateBuilding(spec: BuildingSpec): BuildingModel {
         ext.box(M.frame, o.x0 - 0.05, o.y0 + oh / 2, T / 2 + 0.02, 0.1, oh + 0.1, 0.08, 2);
         ext.box(M.frame, o.x1 + 0.05, o.y0 + oh / 2, T / 2 + 0.02, 0.1, oh + 0.1, 0.08, 2);
         ext.box(M.frame, cx, o.y1 + 0.06, T / 2 + 0.02, ow + 0.3, 0.14, 0.1, 2);
+        if ((o as { shop?: boolean }).shop) {
+          // the shop board: counter shutter down on brackets, the top shutter propped up, goods on the board
+          ext.box('wood:planks|stain:walnut|fin:oiled', cx, o.y0 - 0.03, T / 2 + 0.32, ow + 0.1, 0.06, 0.62, 1.2);
+          for (const sd of [-1, 1]) { ext.push().translate(cx + sd * (ow / 2 - 0.1), o.y0 - 0.2, T / 2 + 0.2).rotateX(0.75); ext.box('iron', 0, 0, 0, 0.03, 0.4, 0.03, 2); ext.pop(); }
+          ext.push().translate(cx, o.y1 + 0.02, T / 2 + 0.02).rotateX(-1.2); ext.box(M.shutter, 0, 0, 0.4, ow + 0.1, 0.035, 0.8, 1.2); ext.pop();
+          const ware = ['color:b02a18|r:0.4', 'color:d8b030|r:0.4', 'mat:flour|tint:a06a38', 'ceramic|c:a86a48|glaze:1', 'cloth:wool|dye:woad'][spec.seed % 5];
+          for (let i = 0; i < Math.floor(ow / 0.32); i++) ext.ellipsoid(ware, o.x0 + 0.2 + i * 0.32, o.y0 + 0.06, T / 2 + 0.3 + (i % 2) * 0.12, 0.1, 0.07, 0.1, 8, 0.9);
+          continue;
+        }
         if (!isDoor) {
-          ext.box(M.frame, cx, o.y0 - 0.04, T / 2 + 0.04, ow + 0.26, 0.08, 0.14, 2);
-          // leaded glass panes inset in the wall
-          ext.box(M.glass, cx, o.y0 + oh / 2, 0, ow, oh, 0.02, 1);
-          ext.box(M.frame, cx, o.y0 + oh / 2, 0.012, 0.03, oh, 0.03, 2);
-          ext.box(M.frame, cx, o.y0 + oh / 2, 0.012, ow, 0.03, 0.03, 2);
+          // a stone sill that throws the rain clear, and a lintel over stone ground floors
+          ext.box(M.ground, cx, o.y0 - 0.06, T / 2 + 0.05, ow + 0.34, 0.1, 0.22, 0.6);
+          if (f === 0 && (spec.style === 'stone' || spec.style === 'dark' || spec.style === 'rustic' || spec.style === 'timber')) ext.box(M.ground, cx, o.y1 + 0.13, T / 2 + 0.01, ow + 0.42, 0.22, 0.1, 0.6);
+          // twin casements in an oak frame, a transom, and leaded diamond panes set back in the reveal
+          const gz = T / 2 - 0.09;
+          ext.box(M.glass, cx, o.y0 + oh / 2, gz - 0.015, ow, oh, 0.012, 1);
+          for (const [bx, bw] of [[o.x0 + 0.025, 0.05], [o.x1 - 0.025, 0.05], [cx, 0.06]] as const) ext.box(M.frame, bx, o.y0 + oh / 2, gz, bw, oh, 0.05, 2);
+          for (const by of [o.y0 + 0.025, o.y1 - 0.025, o.y0 + oh * 0.7]) ext.box(M.frame, cx, by, gz, ow, 0.05, 0.05, 2);
+          // iron casement stays and a latch
+          for (const sd of [-1, 1]) ext.box('iron', cx + sd * 0.07, o.y0 + oh * 0.45, gz + 0.03, 0.012, 0.09, 0.012, 2);
           // shutters, swung open against the wall (or closed on some)
           const closed = r() < 0.12;
           for (const sd of [-1, 1]) {
@@ -243,6 +268,105 @@ export function generateBuilding(spec: BuildingSpec): BuildingModel {
     const aw = Math.min(w - 1, 4.5), dye = ['madder', 'woad', 'weld', 'moss'][(spec.seed >> 4) % 4];
     for (let i = 0; i < 6; i++) { ext.push().translate(-aw / 2 + (i + 0.5) * aw / 6, PLINTH + 2.75, d / 2 + 0.55).rotateX(0.45); ext.box(`cloth:canvas|dye:${i % 2 ? 'cream' : dye}`, 0, 0, 0, aw / 6 + 0.01, 0.02, 1.2, 1); ext.pop(); }
     for (const sd of [-1, 1]) ext.box('wood:dark|stain:walnut|fin:raw', sd * aw / 2, PLINTH + 2.5, d / 2 + 1.05, 0.04, 0.04, 0.04, 2);
+  }
+  // ---- L-shaped plans: a lower rear wing with its own roof running the other way ----
+  if (spec.wing) {
+    const { side, w: ww, d: wd } = spec.wing;
+    const wf = Math.max(1, floors - 1), wh = PLINTH + fh * wf;
+    const cx = side * (w / 2 - ww / 2), cz = -d / 2 - wd / 2 + T / 2;
+    ext.box(M.plinth, cx, (PLINTH - 0.55) / 2, cz, ww + 0.12, PLINTH + 0.5, wd + 0.12, 0.6);
+    col(cx, PLINTH / 2 - 0.25, cz, (ww + 0.12) / 2, (PLINTH + 0.5) / 2, (wd + 0.12) / 2);
+    int.box(M.floor, cx, PLINTH - 0.02, cz, ww - T, 0.04, wd - T, 1);
+    const wsides = [
+      new THREE.Matrix4().makeTranslation(cx + ww / 2, 0, cz - wd / 2).multiply(new THREE.Matrix4().makeRotationY(Math.PI)),
+      new THREE.Matrix4().makeTranslation(cx + ww / 2, 0, cz + wd / 2).multiply(new THREE.Matrix4().makeRotationY(Math.PI / 2)),
+      new THREE.Matrix4().makeTranslation(cx - ww / 2, 0, cz - wd / 2).multiply(new THREE.Matrix4().makeRotationY(-Math.PI / 2)),
+    ];
+    wsides.forEach((m, k) => {
+      const len = k === 0 ? ww : wd;
+      for (let f = 0; f < wf; f++) {
+        const y0 = PLINTH + f * fh;
+        const op: { x0: number; x1: number; y0: number; y1: number }[] = [];
+        const nwin = Math.floor((len - 1.2) / 2.4);
+        for (let i = 0; i < nwin; i++) { const wx = 0.6 + (len - 1.2) * (i + 0.5) / nwin; if (k > 0 && wx < 1.0) continue; op.push({ x0: wx - winW / 2, x1: wx + winW / 2, y0: 0.95, y1: 0.95 + winH }); }
+        ext.push(m.clone().multiply(new THREE.Matrix4().makeTranslation(0, y0, 0)));
+        ext.wall(f === 0 ? M.ground : M.wallOut, len, fh, T, op, 0.45, M.inner, M.inner);
+        if (spec.style === 'timber' || spec.style === 'plaster') halfTimber(ext, M.frame, len, fh, T, op, r, f === 0 && spec.style === 'timber' ? 0 : 1, (spec.seed >> 15) % 4);
+        for (const o of op) {
+          const ocx = (o.x0 + o.x1) / 2, ow = o.x1 - o.x0, oh = o.y1 - o.y0, gz = T / 2 - 0.09;
+          ext.box(M.ground, ocx, o.y0 - 0.06, T / 2 + 0.05, ow + 0.34, 0.1, 0.22, 0.6);
+          ext.box(M.glass, ocx, o.y0 + oh / 2, gz - 0.015, ow, oh, 0.012, 1);
+          for (const [bx, bw] of [[o.x0 + 0.025, 0.05], [o.x1 - 0.025, 0.05], [ocx, 0.06]] as const) ext.box(M.frame, bx, o.y0 + oh / 2, gz, bw, oh, 0.05, 2);
+          for (const by of [o.y0 + 0.025, o.y1 - 0.025]) ext.box(M.frame, ocx, by, gz, ow, 0.05, 0.05, 2);
+          for (const sd of [-1, 1]) ext.box(M.shutter, ocx + sd * (ow / 2 + ow / 4 + 0.08), o.y0 + oh / 2, T / 2 + 0.06, ow / 2, oh, 0.035, 1.2);
+        }
+        wallColliders(model, m, y0, len, fh, T, op);
+        ext.pop();
+      }
+    });
+    // corner posts
+    for (const [px, pz] of [[cx - ww / 2, cz - wd / 2], [cx + ww / 2, cz - wd / 2]]) ext.box(framed ? M.frame : M.ground, px, wh / 2, pz, T + 0.08, wh - PLINTH + 0.4, T + 0.08, 1);
+    // its roof: ridge along z, gable on the back wall, running into the main roof
+    const gh = (ww / 2) * Math.tan(pitch), sl = (ww / 2 + over) / Math.cos(pitch);
+    for (const sd of [1, -1]) {
+      const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -sd * pitch);
+      const rx = cx + sd * (ww / 2 + over) / 2, ry = wh + gh / 2 - (over * Math.tan(pitch)) / 2 + roofT / 2;
+      ext.push(new THREE.Matrix4().compose(new THREE.Vector3(rx, ry, cz + over / 2), q, new THREE.Vector3(1, 1, 1)));
+      ext.box(M.roof, 0, 0, 0, sl, roofT, wd + over * 2, 0.45);
+      ext.pop();
+      col(rx, ry, cz + over / 2, sl / 2, roofT / 2 + 0.05, (wd + over * 2) / 2, q);
+    }
+    ext.push(wsides[0].clone().multiply(new THREE.Matrix4().makeTranslation(0, wh, 0)));
+    for (const z of [T / 2, -T / 2]) {
+      const A = new THREE.Vector3(0, 0, z), B = new THREE.Vector3(ww, 0, z), C = new THREE.Vector3(ww / 2, gh, z);
+      if (z > 0) ext.quad(M.wallOut, A, B, C, C.clone(), [[0, 0], [ww * 0.45, 0], [ww * 0.225, gh * 0.45], [ww * 0.225, gh * 0.45]]);
+      else ext.quad(M.inner, B, A, C, C.clone(), [[0, 0], [ww * 0.45, 0], [ww * 0.225, gh * 0.45], [ww * 0.225, gh * 0.45]]);
+    }
+    ext.pop();
+    ext.push().translate(cx, wh + gh + roofT * 0.6, cz - wd / 2 - over).rotateX(Math.PI / 2);
+    ext.cyl(spec.roof === 'thatch' ? M.roof : M.chimney, 0, 0, 0, 0.11, 0.11, wd + over * 2, 8, true, 1);
+    ext.pop();
+  }
+  // ---- a flag on the gable of grander houses ----
+  if (spec.flag) {
+    const sx = (spec.seed % 2 ? 1 : -1) * (w / 2 + 0.05), py = eaveY + ridgeH * 0.45;
+    ext.cyl('wood:dark|stain:ebony|fin:oiled', sx, py, 0, 0.04, 0.03, 3.6, 6, true, 2);
+    const fc = spec.kingdom === 'ironreach' ? 'cloth:wool|dye:madder' : spec.kingdom === 'vanguardia' ? 'cloth:wool|dye:woad' : 'cloth:wool|dye:moss';
+    ext.push().translate(sx, py + 3.1, 0.45).rotateY(0.25).rotateX(0.08);
+    ext.box(fc, 0, 0, 0, 0.02, 0.62, 0.9, 1);
+    ext.box('cloth:wool|dye:weld', 0.012, 0, 0, 0.005, 0.22, 0.3, 1);
+    ext.pop();
+  }
+  // ---- churches: a stone bell tower with a belfry and a spire ----
+  if (spec.type === 'chapel') {
+    const ts = Math.min(4.2, w * 0.5), tz = -d / 2 - ts / 2 + 0.2, th = totalH + ridgeH + 5.5;
+    ext.box(M.wallOut, 0, th / 2 - 0.3, tz, ts, th + 0.6, ts, 0.5);
+    col(0, th / 2, tz, ts / 2, th / 2, ts / 2);
+    ext.box(M.chimney, 0, th - 0.1, tz, ts + 0.3, 0.25, ts + 0.3, 0.6);
+    for (const [ax, az] of [[0, 1], [0, -1], [1, 0], [-1, 0]] as const) {
+      // louvred belfry openings and slit windows down the tower
+      ext.box('color:0a0a0a', ax * (ts / 2 + 0.01), th - 2.0, tz + az * (ts / 2 + 0.01), az ? 1.0 : 0.02, 1.8, ax ? 1.0 : 0.02);
+      for (let k = 0; k < 4; k++) ext.box('wood:dark|stain:ebony|fin:raw', ax * (ts / 2 + 0.03), th - 2.7 + k * 0.45, tz + az * (ts / 2 + 0.03), az ? 1.0 : 0.05, 0.06, ax ? 1.0 : 0.05, 2);
+      ext.box('color:0a0a0a', ax * (ts / 2 + 0.01), th * 0.45, tz + az * (ts / 2 + 0.01), az ? 0.18 : 0.02, 1.2, ax ? 0.18 : 0.02);
+    }
+    ext.ellipsoid('brass', 0, th - 1.9, tz, 0.45, 0.5, 0.45, 12, 0.8);
+    ext.push().translate(0, th + 0.02, tz).rotateY(Math.PI / 4);
+    ext.cyl(M.roof, 0, 0, 0, ts * 0.74, 0.04, ts * 1.9, 4, false, 0.5);
+    ext.pop();
+    ext.box('iron', 0, th + ts * 1.9 + 0.5, tz, 0.06, 1.0, 0.06, 2);
+    ext.box('iron', 0, th + ts * 1.9 + 0.7, tz, 0.5, 0.06, 0.06, 2);
+    model.bell = new THREE.Vector3(0, th - 1.9, tz);
+  }
+  // ---- a lean-to booth against the side of shops: posts, a plank roof, a counter of goods ----
+  if (spec.type === 'shop' && (spec.seed >> 6) % 3 === 0) {
+    const sx = (spec.seed % 2 ? 1 : -1), bw2 = Math.min(d - 1.5, 3.4), ox = sx * (w / 2 + 0.95);
+    for (const zz of [-bw2 / 2, bw2 / 2]) ext.box('wood:dark|stain:walnut|fin:raw', sx * (w / 2 + 1.75), 1.15, zz, 0.1, 2.3, 0.1, 2);
+    ext.push().translate(ox, 2.55, 0).rotateZ(sx * 0.32); ext.box('wood:planks|stain:walnut|fin:raw', 0, 0, 0, 2.1, 0.06, bw2 + 0.4, 1.2); ext.pop();
+    ext.box('wood:planks|stain:honey|fin:raw', sx * (w / 2 + 1.5), 0.85, 0, 0.6, 0.08, bw2, 1.2);
+    ext.box('wood:planks|stain:honey|fin:raw', sx * (w / 2 + 1.75), 0.45, 0, 0.05, 0.8, bw2, 1.2);
+    const ware = ['color:b02a18|r:0.4', 'color:6a9a2a|r:0.4', 'cloth:wool|dye:madder', 'ceramic|c:506070|glaze:1'][(spec.seed >> 9) % 4];
+    for (let i = 0; i < 7; i++) ext.ellipsoid(ware, sx * (w / 2 + 1.5), 0.93, -bw2 / 2 + 0.25 + i * (bw2 - 0.5) / 6, 0.11, 0.07, 0.11, 8, 0.9);
+    col(sx * (w / 2 + 1.5), 0.45, 0, 0.35, 0.45, bw2 / 2);
   }
   // ridge beam inside
   int.box(M.beam, 0, eaveY + ridgeH - 0.25, 0, w, 0.2, 0.2, 2);

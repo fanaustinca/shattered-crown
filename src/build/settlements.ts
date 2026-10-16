@@ -89,6 +89,7 @@ export interface LiveBuilding {
   furnished: boolean;
   intColliders: RAPIER.Collider[];
   detailed: boolean;
+  interior?: THREE.Object3D | null;
 }
 
 export class Settlements {
@@ -509,7 +510,21 @@ export class Settlements {
     this.setLodHidden(b, false);
   }
 
+  /** Occlusion for interiors: walls hide furniture, so a house's furnished interior is drawn only when the
+   *  camera is inside it, or close enough outside to see in through a window or the door. */
+  cullInteriors(cam: THREE.Vector3) {
+    const inB = this.inside(cam);
+    for (const l of this.live.values()) {
+      if (!l.furnished) continue;
+      const int = l.interior ??= l.root.getObjectByName('interior') ?? null;
+      if (!int) continue;
+      const b = l.placed, d = Math.hypot(cam.x - b.x, cam.z - b.z) - Math.max(b.spec.w, b.spec.d) / 2;
+      const vis = l === inB || (inB ? d < 12 : d < 16);
+      if (int.visible !== vis) int.visible = vis;
+    }
+  }
   update2(dt: number, hours: number, t: number, cam?: THREE.Vector3) {
+    if (cam) this.cullInteriors(cam);
     for (const l of this.live.values()) {
       if (cam) {
         const d = Math.hypot(l.root.position.x - cam.x, l.root.position.y - cam.y, l.root.position.z - cam.z);

@@ -253,7 +253,17 @@ export class UI {
         const toMap = (x: number, z: number) => [((x + HALF) / (HALF * 2)) * 100, ((z + HALF) / (HALF * 2)) * 100];
         const [px, pz] = toMap(pp.x, pp.z);
         const labels = this.game.towns.plans.filter((pl) => !pl.minor).map((pl) => { const [x, z] = toMap(pl.site.x, pl.site.z); return `<div class="lbl ${pl.site.kind}" style="left:${x}%;top:${z}%">${pl.site.name}</div>`; }).join('');
-        sec.innerHTML = `<h2>The Realm</h2><div class="map"><img src="${img}"/>${labels}<div class="me" style="left:${px}%;top:${pz}%;transform:translate(-50%,-50%) rotate(${-this.game.player.yaw}rad)"><svg width="30" height="30" viewBox="-11 -11 22 22"><polygon points="0,-10 7,8 0,3 -7,8" fill="#d81e10" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/></svg></div><div class="kl v">VANGUARDIA</div><div class="kl i">IRONREACH</div></div>`;
+        sec.innerHTML = `<h2>The Realm</h2><div class="map"><img src="${img}"/>${labels}<div class="me" style="left:${px}%;top:${pz}%;transform:translate(-50%,-50%) rotate(${-this.game.player.yaw}rad)"><svg width="30" height="30" viewBox="-11 -11 22 22"><polygon points="0,-10 7,8 0,3 -7,8" fill="#d81e10" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/></svg></div><div class="kl v">VANGUARDIA</div><div class="kl i">IRONREACH</div></div>${this.game.player.god ? '<p class="dim">God mode: right-click anywhere on the map to teleport there.</p>' : ''}`;
+        // god mode: right-click the map to go there
+        const mapEl = sec.querySelector('.map') as HTMLElement;
+        mapEl.addEventListener('contextmenu', (e) => {
+          e.preventDefault();
+          if (!this.game.player.god) return;
+          const r = mapEl.getBoundingClientRect();
+          const x = ((e.clientX - r.left) / r.width) * HALF * 2 - HALF, z = ((e.clientY - r.top) / r.height) * HALF * 2 - HALF;
+          this.close();
+          this.game.teleportTo(x, z);
+        });
       } else if (t === 'journal') {
         const law = this.game.law;
         sec.innerHTML = `<h2>Journal</h2><h3>Bounties</h3><ul>${Object.entries(law.bounty).map(([k, v]) => `<li>${k}: ${Math.round(v)} pennies</li>`).join('')}</ul><h3>Crimes</h3><ul>${law.log.slice(-12).reverse().map((l) => `<li>${l.crime} in ${l.where}</li>`).join('') || '<li class="dim">None — so far.</li>'}</ul>

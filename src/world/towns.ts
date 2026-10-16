@@ -165,17 +165,28 @@ export class Towns {
       };
       const [w0, w1, d0, d1] = dims[type];
       const bw = opts.w ?? w0 + r() * (w1 - w0), bd = opts.d ?? d0 + r() * (d1 - d0);
-      if (overlaps(x, z, bw / 2, bd / 2, yaw) || !okGround(x, z, bw / 2, bd / 2, relaxed)) return null;
+      // shops may have a lean-to booth on one side: keep room for it
+      const sideRoom = type === 'shop' ? 2.0 : 0;
+      if (overlaps(x, z, bw / 2 + sideRoom, bd / 2, yaw) || !okGround(x, z, bw / 2, bd / 2, relaxed)) return null;
+      // an L-shaped plan: a lower wing behind one end, if there is room for it
+      let wing: BuildingSpec['wing'];
+      if (['house', 'townhouse', 'tavern', 'cottage'].includes(type) && !opts.w && r() < 0.38) {
+        const side = r() < 0.5 ? 1 : -1, ww = Math.max(3.4, Math.min(6, bw * 0.5)), wd = 3.6 + r() * 2.2;
+        const lx = side * (bw / 2 - ww / 2), lz = -bd / 2 - wd / 2;
+        const wx = x + lx * Math.cos(yaw) + lz * Math.sin(yaw), wz = z - lx * Math.sin(yaw) + lz * Math.cos(yaw);
+        if (!overlaps(wx, wz, ww / 2, wd / 2, yaw) && okGround(wx, wz, ww / 2, wd / 2, relaxed)) { wing = { side, w: Math.round(ww * 4) / 4, d: Math.round(wd * 4) / 4 }; placed.push({ x: wx, z: wz, hw: ww / 2, hd: wd / 2, yaw }); w.levelRect(wx, wz, ww + 1.2, wd + 1.2, yaw, w.heightAt(x, z), relaxed ? 4.5 : 3); }
+      }
+      const flag = type === 'hall' || type === 'guard' || type === 'barracks' || (type === 'townhouse' && r() < 0.3) || (type === 'tavern' && r() < 0.4);
       const floors = type === 'cottage' || type === 'smithy' || type === 'stable' || type === 'barn' || type === 'chapel' || type === 'warehouse' || type === 'hall' ? 1 : type === 'townhouse' ? (r() < 0.4 ? 3 : 2) : type === 'guard' ? 2 : 2;
       const style: Style = iron ? (r() < 0.6 ? 'stone' : 'dark') : isles ? (r() < 0.5 ? 'rustic' : 'plaster') : type === 'chapel' || type === 'hall' || type === 'barracks' || type === 'guard' ? 'stone' : r() < 0.75 ? 'timber' : 'plaster';
       const roof = type === 'cottage' || type === 'barn' ? (iron ? 'slate' : 'thatch') : iron ? 'slate' : isles ? (r() < 0.5 ? 'thatch' : 'shingle') : r() < 0.8 ? 'tile' : 'thatch';
       const spec: BuildingSpec = {
         id: `${site.id}-${nId++}`, type, style, w: Math.round(bw * 4) / 4, d: Math.round(bd * 4) / 4, floors, seed: Math.floor(r() * 1e9),
         roof: roof as BuildingSpec['roof'], jetty: style === 'timber' && floors > 1 && r() < 0.5, kingdom: site.kingdom,
-        wealth: site.kind === 'capital' ? 0.4 + r() * 0.6 : site.kind === 'castle' ? 0.7 : r() * 0.6, ...opts,
+        wealth: site.kind === 'capital' ? 0.4 + r() * 0.6 : site.kind === 'castle' ? 0.7 : r() * 0.6, wing, flag, ...opts,
       };
       const y = w.heightAt(x, z);
-      placed.push({ x, z, hw: spec.w / 2, hd: spec.d / 2, yaw });
+      placed.push({ x, z, hw: spec.w / 2 + sideRoom, hd: spec.d / 2, yaw });
       w.levelRect(x, z, spec.w + 1.2, spec.d + 1.2, yaw, y, relaxed ? 4.5 : 3);
       w.paveRect(x, z, spec.w, spec.d, yaw);
       const p: Placed = { id: spec.id, spec, x, z, yaw, y, site: site.id, household: null, owner: null };

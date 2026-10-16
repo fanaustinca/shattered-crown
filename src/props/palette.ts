@@ -76,6 +76,28 @@ export function material(key: string): THREE.Material {
     case 'wick': m = new THREE.MeshStandardMaterial({ color: 0x1a1410, roughness: 1 }); break;
     case 'flame': m = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.0, 0.62, 0.22).multiplyScalar(12), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }); break;
     case 'glass': m = new THREE.MeshPhysicalMaterial({ color: opts.c ? parseInt(opts.c, 16) : 0xc8d8c8, roughness: 0.05, metalness: 0, transparent: true, opacity: 0.35, envMapIntensity: 1.5 }); break;
+    case 'leaded': {
+      // crown glass in diamond panes held by lead cames — drawn in the shader from the (metre-scaled) UVs, so a
+      // window costs no extra geometry: each quarry is slightly different in tint and waviness
+      const lm = new THREE.MeshPhysicalMaterial({ color: opts.c ? parseInt(opts.c, 16) : 0xb8c8b4, roughness: 0.08, metalness: 0, transparent: true, opacity: 0.55, envMapIntensity: 1.6 });
+      lm.onBeforeCompile = (sh) => {
+        sh.fragmentShader = sh.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
+          {
+            vec2 q = vUv / 0.13;
+            float a = abs(fract((q.x + q.y) * 0.5) - 0.5), b = abs(fract((q.x - q.y) * 0.5) - 0.5);
+            float lead = 1.0 - smoothstep(0.03, 0.06, min(a, b));
+            vec2 cell = floor(vec2(q.x + q.y, q.x - q.y) * 0.5);
+            float hsh = fract(sin(dot(cell, vec2(12.9898, 78.233))) * 43758.5453);
+            diffuseColor.rgb *= mix(vec3(0.86, 0.94, 0.86), vec3(1.04, 1.02, 0.94), hsh);
+            diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.08, 0.08, 0.09), lead);
+            diffuseColor.a = mix(diffuseColor.a, 1.0, lead);
+          }`).replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+          { vec2 q2 = vUv / 0.13; float a2 = abs(fract((q2.x + q2.y) * 0.5) - 0.5), b2 = abs(fract((q2.x - q2.y) * 0.5) - 0.5); roughnessFactor = mix(roughnessFactor, 0.55, 1.0 - smoothstep(0.03, 0.06, min(a2, b2))); }`);
+      };
+      lm.defines = { USE_UV: '' };
+      lm.customProgramCacheKey = () => 'leaded';
+      m = lm; break;
+    }
     case 'straw': m = pbr('thatch_roof_angled', { color: 0xf0d890 }).clone(); break;
     case 'paper': m = new THREE.MeshStandardMaterial({ color: opts.c ? parseInt(opts.c, 16) : 0xe8dcc0, roughness: 0.95 }); break;
     case 'color': m = new THREE.MeshStandardMaterial({ color: parseInt(name, 16), roughness: opts.r ? +opts.r : 0.8, metalness: opts.m ? +opts.m : 0, emissive: opts.e ? parseInt(name, 16) : 0x000000, emissiveIntensity: opts.e ? +opts.e : 1 }); break;
