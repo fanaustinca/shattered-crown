@@ -104,18 +104,33 @@ export function installDevConsole(game: Game) {
       }
       return say(`${n} ${foe} soldiers march on the gate of ${g.towns.plans.find((p) => p.site.id === gt.site)?.site.name}.`);
     },
+    /** debug only: the Leviathan — 112 m, four gun decks, 260 guns, a full crew that hunts enemy ships */
+    leviathan: (side: Side = (g.war.enlisted ?? 'vanguardia') as Side) => {
+      const w = water(13);
+      if (!w) return say('No sea deep enough nearby — the Leviathan draws 11.5 m. Try the open coast.');
+      const s = new Ship(g, w, Math.atan2(-w.z, w.x) + Math.PI / 2, 'leviathan', 'Leviathan');
+      s.side = side; s.anchored = false;
+      for (const sl of s.sails) { sl.target = 0.8; sl.set = 0.6; }
+      g.ships.push(s); g.naval.spawned.add(s); g.naval.manShip(s);
+      return say(`The Leviathan (${side}) rides ${Math.round(w.distanceTo(g.player.pos))} m off — ${s.plan!.guns.length} guns. spawn.fleet() gives her something to shoot at.`);
+    },
     brigantine: () => spawn.ship('brigantine'),
     frigate: () => spawn.ship('frigate'),
     manowar: () => spawn.ship('manowar'),
     /** soldiers in a block in front of you */
-    army: (side: Side = 'ironreach', n = 12) => {
-      const made = [];
+    /** a battalion in two ranks `dist` m ahead, facing you; meet an enemy army and they form a battle */
+    army: (side: Side = 'ironreach', n = 30, dist = 60) => {
+      const files = Math.ceil(n / 2);
       for (let i = 0; i < n; i++) {
-        const p = ahead(12 + Math.floor(i / 4) * 2, ((i % 4) - 1.5) * 1.6);
-        made.push(g.war.spawnSoldier(side, p));
+        const rank = Math.floor(i / files), file = (i % files) - (files - 1) / 2 + rank * 0.5;
+        const s = g.war.spawnSoldier(side, ahead(dist + rank * 2.4, file * 2.8));
+        s.order = 'hold'; s.st.yaw = g.player.yaw;
+        if (i === Math.floor(files / 2)) { s.standard = true; g.war.carryStandard(s); }
       }
-      return say(`${n} ${side} soldiers form up ahead.`);
+      return say(`${n} ${side} soldiers form up ${dist} m ahead. Bring an enemy army within 300 m and battle is joined.`);
     },
+    /** two armies facing each other across a field in front of you */
+    armies: (n = 40) => { spawn.army('vanguardia', n, 50); spawn.army('ironreach', n, 190); return say(`Two armies of ${n} face each other. Drums!`); },
     /** a marching column on the nearest road to the front */
     column: (side?: Side, n = 18) => say(`A column of ${g.war.spawnColumn(side, n)} soldiers marches to war.`),
     /** a squad that follows your orders (2 follow, 3 hold, 4 charge, 5 line) */
@@ -157,6 +172,7 @@ export function installDevConsole(game: Game) {
         ['spawn.team(n)', 'a wagon with a team of 1–4 horses in harness'],
         ["spawn.ship('brigantine' | 'frigate' | 'manowar')", 'a warship on the nearest water deep enough for her'],
         ['spawn.siege(n)', 'an enemy army marching on the nearest town gate'],
+        ['spawn.leviathan(side)', 'debug only: a 112 m four-decker with 260 guns and a crew that hunts enemy ships'],
         ['spawn.boat()', 'a rowing boat'],
         ['spawn.fleet(side)', 'two opposing squadrons for a sea battle nearby'],
         ['spawn.army(side, n)', "soldiers ('vanguardia' | 'ironreach') formed up ahead"],

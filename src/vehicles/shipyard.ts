@@ -10,7 +10,7 @@
 import * as THREE from 'three';
 import { GeoBuilder } from '../build/geom';
 
-export type ShipClass = 'brigantine' | 'frigate' | 'manowar';
+export type ShipClass = 'brigantine' | 'frigate' | 'manowar' | 'leviathan';
 
 export interface ClassSpec {
   name: string; L: number; B: number;
@@ -46,6 +46,13 @@ export const CLASSES: Record<ShipClass, ClassSpec> = {
     name: "Man-o'-war", L: 58, B: 16, decks: [2.4, 5.2, 8.4, 10.8, 13.2, 15.6], gunDecks: [2, 3, 4], portsPerSide: 15, weatherGuns: 7,
     qdH: 2.2, qdTo: -0.36, fcH: 1.8, fcFrom: 0.6, masts: [{ at: 0.33, h: 50, yards: 4 }, { at: 0.0, h: 56, yards: 4 }, { at: -0.31, h: 42, yards: 3 }],
     draft: 6.8, mass: 2600000, paint: { hull: 'wood:planks|stain:ebony|fin:oiled', band: 'wood:planks|stain:amber|fin:oiled', wale: DARK, inner: 'wood:planks|stain:oxblood|fin:raw|in:1' }, bowsprit: 18,
+  },
+  // debug only (spawn.leviathan()): a sea monster of a ship — four enclosed gun decks of thirty ports a side,
+  // seven decks in all, four towering masts, a crew of hundreds, too deep for anything but open sea
+  leviathan: {
+    name: 'Leviathan', L: 112, B: 30, decks: [3.0, 6.4, 9.6, 12.6, 15.6, 18.6, 21.6], gunDecks: [2, 3, 4, 5], portsPerSide: 30, weatherGuns: 12,
+    qdH: 2.6, qdTo: -0.4, fcH: 2.3, fcFrom: 0.62, masts: [{ at: 0.42, h: 88, yards: 5 }, { at: 0.14, h: 102, yards: 5 }, { at: -0.14, h: 96, yards: 5 }, { at: -0.4, h: 70, yards: 4 }],
+    draft: 11.5, mass: 14000000, paint: { hull: 'wood:planks|stain:ebony|fin:oiled', band: 'wood:planks|stain:oxblood|fin:oiled', wale: 'brass', inner: 'wood:planks|stain:oxblood|fin:raw|in:1' }, bowsprit: 32,
   },
 };
 
@@ -235,7 +242,7 @@ export function planShip(cls: ShipClass): ShipPlan {
     // carved rail and lanterns on the taffrail
     hull.box(S.paint.band, sternX - 0.08, winY1 + 0.12, 0, 0.12, 0.2, wmax * 2 + 0.4, 1);
     hull.box(S.paint.band, sternX - 0.08, winY0 - 0.12, 0, 0.12, 0.2, wmax * 2 + 0.4, 1);
-    if (cls === 'manowar') {
+    if (cls === 'manowar' || cls === 'leviathan') {
       // an open stern gallery for the admiral's cabin
       hull.box(OAK, sternX - 0.9, winY0 - 0.15, 0, 1.6, 0.12, wmax * 2 + 0.6, 1);
       for (let k = 0; k <= 10; k++) hull.box(S.paint.band, sternX - 1.6, winY0 + 0.45, -wmax - 0.2 + k * (wmax * 2 + 0.4) / 10, 0.06, 0.9, 0.06, 1);
@@ -362,7 +369,7 @@ export function planShip(cls: ShipClass): ShipPlan {
   const gun = (g: GeoBuilder, p: { x: number; y0: number; deck: number }, s: 1 | -1) => {
     const y = S.decks[p.deck] + (p.y0 - S.decks[p.deck] > 0.6 ? S.qdH : 0);
     const w = hb(p.x, p.y0 + 0.3) - T;
-    const len = cls === 'manowar' && p.deck === 1 ? 3.0 : cls === 'brigantine' ? 2.0 : 2.6;
+    const len = (cls === 'manowar' || cls === 'leviathan') && p.deck <= 2 ? 3.0 : cls === 'brigantine' ? 2.0 : 2.6;
     const r = len * 0.085;
     const zc = s * (w - len * 0.5 - 0.15);
     // carriage cheeks and axle trucks
@@ -460,7 +467,7 @@ export function planShip(cls: ShipClass): ShipPlan {
   // lower hull side colliders (the outside of the hull below the lowest deck, so the hull meets the sea bed or a dock)
   for (let x = -H * 0.8; x < H * 0.8; x += 3) for (const s of [1, -1]) { const w = hb(x + 1.5, wl * 0.7); if (w > 0.6) C(v(x + 1.5, wl * 0.6, s * (w * 0.6)), v(1.5, wl * 0.35, w * 0.4), 1); }
   const buoy: THREE.Vector3[] = [];
-  const nb = cls === 'brigantine' ? 6 : 9;
+  const nb = cls === 'brigantine' ? 6 : cls === 'leviathan' ? 14 : 9;
   for (let i = 0; i < nb; i++) { const x = -H * 0.85 + (i + 0.5) / nb * H * 1.7; const w = hb(x, wl) * 0.75; for (const s of [1, -1]) buoy.push(v(x, wl - 1, s * w)); }
 
   return { spec: S, cls, hull, inside, colliders, sails, guns, doors, lights, hammocks, cabin: cab, helm, buoy, waterline: wl, deckY: upper, topY: top(0), hb, top, weatherY,

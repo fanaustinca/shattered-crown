@@ -12,8 +12,16 @@ import { ITEMS, buildItemMesh } from '../props/items';
 
 type Side = 'vanguardia' | 'ironreach';
 
-interface Live { center: THREE.Vector3; dir: THREE.Vector3; t: number; start: Record<Side, number>; ids: Set<Soldier>; phaseT: number; id: number; guns: ReturnType<War['addCannon']>[] }
-export interface Front { bridge: Bridge; path: THREE.Vector3[]; cum: number[]; line: number; battleT: number; live: Live | null; name: string }
+interface Live { center: THREE.Vector3; dir: THREE.Vector3; t: number; start: Record<Side, number>; ids: Set<Soldier>; phaseT: number; id: number; guns: ReturnType<War['addCannon']>[]; over?: boolean }
+export interface Front {
+  bridge: Bridge; path: THREE.Vector3[]; cum: number[]; line: number; battleT: number; live: Live | null; name: string;
+  /** troops each side keeps at this front (the war goes on out of sight: attrition, reinforcement, the line moves) */
+  str: Record<Side, number>;
+  /** line movement per game hour, for the journal */
+  trend: number;
+  /** a battle that broke out away from the fronts (armies meeting in the field) */
+  field?: boolean;
+}
 
 let BID = 1;
 
@@ -25,6 +33,7 @@ export class Fronts {
 
   build() {
     const war = this.war;
+    for (const p of this.game.towns.plans) for (const b of p.buildings) if (b.spec.type === 'barracks' && (p.site.kingdom === 'vanguardia' || p.site.kingdom === 'ironreach')) this.barracks[p.site.kingdom]++;
     for (const b of this.game.world.bridges) {
       const near = (side: Side) => war.routes.filter((r) => r.side === side).sort((a, c) => a.pts[a.pts.length - 1].distanceTo(new THREE.Vector3(b.x, a.pts[0].y, b.z)) - c.pts[c.pts.length - 1].distanceTo(new THREE.Vector3(b.x, c.pts[0].y, b.z)))[0];
       const v = near('vanguardia'), ir = near('ironreach');
@@ -33,7 +42,7 @@ export class Fronts {
       const path = [...v.pts, new THREE.Vector3(b.x, b.deck, b.z), ...[...ir.pts].reverse()];
       const cum = [0];
       for (let i = 1; i < path.length; i++) cum.push(cum[i - 1] + path[i].distanceTo(path[i - 1]));
-      this.fronts.push({ bridge: b, path, cum, line: 0, battleT: 40 + Math.random() * 200, live: null, name: b.name });
+      this.fronts.push({ bridge: b, path, cum, line: 0, battleT: 40 + Math.random() * 200, live: null, name: b.name, str: { vanguardia: 1100 + Math.random() * 200, ironreach: 1100 + Math.random() * 200 }, trend: 0 });
     }
   }
 
@@ -54,13 +63,48 @@ export class Fronts {
 
   status(f: Front) {
     const l = f.line;
-    if (Math.abs(l) < 0.06) return `${f.name}: the armies face each other across the bridge`;
-    if (l > 0) return `${f.name}: Vanguardia has crossed and is pushing into Ironreach (${Math.round(l * 100)}% of the way)`;
-    return `${f.name}: Ironreach has crossed and is pushing into Vanguardia (${Math.round(-l * 100)}% of the way)`;
+    const strs = ` — ${Math.round(f.str.vanguardia)} Vanguardian and ${Math.round(f.str.ironreach)} Ironreach troops`;
+    const mom = Math.abs(f.trend) < 0.002 ? ', holding' : f.trend > 0 ? ', Vanguardia gaining ground' : ', Ironreach gaining ground';
+    if (Math.abs(l) < 0.06) return `${f.name}: the armies face each other across the bridge${strs}${mom}`;
+    if (l > 0) return `${f.name}: Vanguardia has crossed and is pushing into Ironreach (${Math.round(l * 100)}% of the way)${strs}${mom}`;
+    return `${f.name}: Ironreach has crossed and is pushing into Vanguardia (${Math.round(-l * 100)}% of the way)${strs}${mom}`;
+  }
+
+  /** battles that broke out in the open, away from a front */
+  fields: Front[] = [];
+  private detectT = 2;
+  /** barracks per kingdom (reinforcements per game hour come from them) */
+  barracks: Record<Side, number> = { vanguardia: 0, ironreach: 0 };
+
+  /** The war out of sight, every moment: each front is a slow grind (Lanchester attrition — each side loses
+   *  men in proportion to the other's numbers), the barracks feed fresh battalions in, and the line drifts
+   *  toward whoever is weaker; long supply lines slow an advance deep in enemy country. */
+  private simulate(dtH: number) {
+    if (dtH <= 0) return;
+    const n = Math.max(1, this.fronts.length);
+    for (const f of this.fronts) {
+      if (f.live) continue;
+      const V = f.str.vanguardia, I = f.str.ironreach;
+      f.str.vanguardia = Math.max(50, V - 0.02 * I * dtH + (8 + this.barracks.vanguardia * 6) / n * dtH);
+      f.str.ironreach = Math.max(50, I - 0.02 * V * dtH + (8 + this.barracks.ironreach * 6) / n * dtH);
+      const push = (V - I) / (V + I);
+      const dl = (push * 0.05 - f.line * 0.012) * dtH;
+      f.trend = dl / dtH;
+      const before = f.line;
+      f.line = THREE.MathUtils.clamp(f.line + dl, -0.85, 0.85);
+      if (Math.sign(before) !== Math.sign(f.line) && Math.abs(before) > 0.001) this.log.push(`${f.line > 0 ? 'Vanguardia' : 'Ironreach'} has pushed over the river at ${f.name}.`);
+    }
   }
 
   update(dt: number) {
     const g = this.game, P = g.player.pos;
+    this.simulate(dt * g.daySpeed * (g.sleepUntil >= 0 ? 900 : 1));
+    for (const f of [...this.fields]) {
+      if (f.live) this.fight(f, dt);
+      if (!f.live) this.fields.splice(this.fields.indexOf(f), 1);
+    }
+    this.detectT -= dt;
+    if (this.detectT <= 0) { this.detectT = 2; this.detectField(); }
     for (const f of this.fronts) {
       if (f.live) { this.fight(f, dt); continue; }
       f.battleT -= dt;
@@ -81,6 +125,8 @@ export class Fronts {
     this.shift(f, v ? 'vanguardia' : 'ironreach', tell);
   }
   private shift(f: Front, winner: Side, tell: boolean) {
+    if (f.field) { const msg = `${winner === 'vanguardia' ? 'Vanguardia' : 'Ironreach'} wins the fight at ${f.name}.`; this.log.push(msg); if (tell) this.game.hud.toast(msg); return; }
+    f.str[winner === 'vanguardia' ? 'ironreach' : 'vanguardia'] *= 0.85;
     const step = 0.12 + Math.random() * 0.08;
     const before = f.line;
     f.line = THREE.MathUtils.clamp(f.line + (winner === 'vanguardia' ? step : -step), -0.85, 0.85);
@@ -134,8 +180,8 @@ export class Fronts {
     const across = new THREE.Vector3(-dir.z, 0, dir.x);
     const gap = 75;
     const live: Live = { center: p.clone(), dir: dir.clone(), t: 0, start: { vanguardia: 0, ironreach: 0 }, ids: new Set(), phaseT: 0, id: BID++, guns: [] };
-    const budget = Math.max(16, 130 - war.soldiers.filter((s) => s.alive).length);
-    const per = Math.min(48, Math.floor(budget / 2));
+    const budget = Math.max(16, 200 - war.soldiers.filter((s) => s.alive).length);
+    const per = Math.min(72, Math.floor(budget / 2));
     const bank = (q: THREE.Vector3) => Math.sign(q.x - riverX(q.z));
     for (const side of ['vanguardia', 'ironreach'] as Side[]) {
       const sg = side === 'vanguardia' ? -1 : 1;           // Vanguardia stands on the -dir side
@@ -173,6 +219,14 @@ export class Fronts {
         live.ids.add(s);
         live.start[side]++;
       }
+      // the commander stands behind the centre of the line, by the guns
+      const cpos = front.clone().addScaledVector(dir, sg * 16);
+      cpos.y = g.groundAt(cpos.x, cpos.z, cpos.y + 40);
+      const cmd = war.spawnSoldier(side, cpos);
+      cmd.battle = { slot: cpos.clone(), face, phase: 'form', enemy, id: live.id };
+      cmd.marching = false; cmd.order = 'hold'; cmd.path = [];
+      this.makeCommander(cmd);
+      live.ids.add(cmd); live.start[side]++;
       // a battery of field guns behind the archers, laid on the enemy line
       for (const e of [-1, 1]) {
         const gp = front.clone().addScaledVector(across, e * Math.min(18, files * 0.6)).addScaledVector(dir, sg * 22);
@@ -217,10 +271,25 @@ export class Fronts {
     const across = new THREE.Vector3(-L.dir.z, 0, L.dir.x);
     // phases: form up (18 s), advance at a walk, charge when the lines are close; archers halt at bowshot
     // and loose volleys over their own line; field guns fire on the enemy foot until the lines meet
+    // morale: a side that has lost most of its men and sees the battle going against it gives in — its commander
+    // asks for terms, or (if he has fallen) it simply breaks and runs
+    if (!L.over) {
+      const sv = v / Math.max(1, L.start.vanguardia), si = i / Math.max(1, L.start.ironreach);
+      for (const [side, mine, theirs] of [['vanguardia', sv, si], ['ironreach', si, sv]] as [Side, number, number][]) {
+        const cmd = [...L.ids].find((x) => x.side === side && x.commander);
+        const cmdAlive = !!cmd?.alive;
+        if (L.t > 30 && mine < (cmdAlive ? 0.45 : 0.55) && theirs > mine * 1.25) { this.yield(f, L, side, cmdAlive); return; }
+      }
+    }
     for (const s of L.ids) {
-      if (!s.alive || !s.battle) continue;
+      if (!s.alive || !s.battle || s.surrendered) continue;
       const b = s.battle;
       const lateral = b.slot.clone().sub(L.center).dot(across);
+      if (s.commander) {
+        // he rides out the battle behind his men, sword drawn only if the enemy reaches him
+        if (!s.fightTarget) { s.st.yaw += (b.face - s.st.yaw) * Math.min(1, dt * 2); if (s.st.pos.distanceTo(b.slot) > 2 && !s.path.length) s.path = [b.slot.clone()]; }
+        continue;
+      }
       if (s.archer) {
         const e = this.nearestFoeS(s, L, lateral);
         const d = e ? e.st.pos.distanceTo(s.st.pos) : 1e9;
@@ -283,6 +352,7 @@ export class Fronts {
     const done = (v < L.start.vanguardia * 0.28 || i < L.start.ironreach * 0.28) || L.t > 360;
     if (!done) return;
     const winner: Side = v / Math.max(1, L.start.vanguardia) >= i / Math.max(1, L.start.ironreach) ? 'vanguardia' : 'ironreach';
+    if (!f.field) { f.str.vanguardia = Math.max(50, f.str.vanguardia - (L.start.vanguardia - v) * 8); f.str.ironreach = Math.max(50, f.str.ironreach - (L.start.ironreach - i) * 8); }
     this.shift(f, winner, true);
     // the beaten side flees back down the road; the victors hold the field; the guns are limbered up
     for (const s of L.ids) {
@@ -294,6 +364,95 @@ export class Fronts {
     f.live = null;
     void g;
   }
+  private makeCommander(s: Soldier) {
+    s.commander = true;
+    s.person.name = (s.side === 'vanguardia' ? ['Captain Aldric', 'Lord Marshal Wynne', 'Captain Edrys', 'Sir Hollis'] : ['Warlord Kael', 'Captain Varr', 'Iron Marshal Bjorn', 'Thane Ulric'])[Math.floor(Math.random() * 4)];
+    // a tall plume on the helm and a cloak in the kingdom's colour, so he can be picked out on the field
+    const plume = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 6).scale(0.6, 2.2, 1), new THREE.MeshStandardMaterial({ color: s.side === 'vanguardia' ? 0xe8e0d0 : 0xb01818, roughness: 0.9 }));
+    plume.position.set(0, 1.86, -0.05);
+    s.rig.byName.head.add(plume);
+    this.war.carryStandard(s);
+  }
+  /** One side gives up the field: with its commander alive it surrenders (the men kneel and drop their
+   *  weapons, and are not to be harmed); without him it breaks and runs. */
+  private yield(f: Front, L: Live, side: Side, terms: boolean) {
+    const g = this.game, winner: Side = side === 'vanguardia' ? 'ironreach' : 'vanguardia';
+    L.over = true;
+    const cmd = [...L.ids].find((x) => x.side === side && x.commander);
+    const name = side === 'vanguardia' ? 'Vanguardia' : 'Ironreach';
+    const msg = terms ? `${cmd?.person.name ?? 'The commander'} of ${name} lowers his sword and asks for terms at ${f.name}. His men throw down their arms.` : `With their commander dead, the ${name} line breaks at ${f.name} and runs!`;
+    if (L.center.distanceTo(g.player.pos) < 1500) g.hud.toast(msg);
+    this.log.push(msg);
+    for (const s of L.ids) {
+      if (!s.alive) continue;
+      if (s.side === side) {
+        s.battle = null; s.fightTarget = null; s.sprint = !terms;
+        if (terms) this.surrender(s);
+        else s.path = [L.center.clone().addScaledVector(L.dir, (s.side === 'vanguardia' ? -1 : 1) * 260)];
+      } else { s.battle = null; s.sprint = false; s.fightTarget = null; s.path = []; s.say?.(['Victory!', 'They yield!', 'Huzzah!'][Math.floor(Math.random() * 3)], false); }
+    }
+    if (!f.field) { f.str[side] = Math.max(50, f.str[side] - (L.start[side] - [...L.ids].filter((x) => x.alive && x.side === side).length) * 8 - (terms ? L.start[side] * 4 : 0)); }
+    this.shift(f, winner, false);
+    for (const c of L.guns) this.war.removeCannon(c);
+    f.live = null;
+  }
+  surrender(s: Soldier) {
+    s.surrendered = true; s.hostile = false; s.order = 'hold'; s.holdAt = s.st.pos.clone(); s.path = [];
+    if (s.sword) s.sword.visible = false;
+    (s.st as { sitting?: boolean }).sitting = true;
+  }
+
+  /** Armies that meet in the open (columns on the road, troops you spawned) form up and fight a proper
+   *  battle instead of brawling in a knot. */
+  private detectField() {
+    const war = this.war;
+    const free = war.soldiers.filter((s) => s.alive && !s.battle && !s.squad && !s.surrendered && !s.holdAt && !s.horse);
+    const V = free.filter((s) => s.side === 'vanguardia'), I = free.filter((s) => s.side === 'ironreach');
+    if (V.length < 5 || I.length < 5) return;
+    for (const a of V) {
+      const b = I.find((o) => o.st.pos.distanceTo(a.st.pos) < 320);
+      if (!b) continue;
+      const mid = a.st.pos.clone().lerp(b.st.pos, 0.5);
+      const vs = V.filter((s) => s.st.pos.distanceTo(mid) < 380), is = I.filter((s) => s.st.pos.distanceTo(mid) < 380);
+      if (vs.length >= 5 && is.length >= 5) { this.fieldBattle([...vs, ...is]); return; }
+    }
+  }
+  fieldBattle(men: Soldier[]) {
+    const g = this.game, war = this.war;
+    const cen = (side: Side) => { const a = men.filter((s) => s.side === side); return a.reduce((p, s) => p.add(s.st.pos), new THREE.Vector3()).multiplyScalar(1 / a.length); };
+    const cV = cen('vanguardia'), cI = cen('ironreach');
+    const center = cV.clone().lerp(cI, 0.5);
+    const dir = cI.clone().sub(cV).setY(0).normalize();
+    const across = new THREE.Vector3(-dir.z, 0, dir.x);
+    const near = g.towns.plans.filter((p) => !p.minor).sort((a, b) => Math.hypot(a.site.x - center.x, a.site.z - center.z) - Math.hypot(b.site.x - center.x, b.site.z - center.z))[0];
+    const bridge = [...g.world.bridges].sort((a, b) => Math.hypot(a.x - center.x, a.z - center.z) - Math.hypot(b.x - center.x, b.z - center.z))[0];
+    const f: Front = { bridge, path: [], cum: [], line: 0, battleT: 1e9, live: null, name: `the field near ${near?.site.name ?? 'the road'}`, str: { vanguardia: 0, ironreach: 0 }, trend: 0, field: true };
+    const live: Live = { center, dir, t: 0, start: { vanguardia: 0, ironreach: 0 }, ids: new Set(), phaseT: 0, id: BID++, guns: [] };
+    const half = Math.max(30, cV.distanceTo(cI) / 2);
+    for (const side of ['vanguardia', 'ironreach'] as Side[]) {
+      const sg = side === 'vanguardia' ? -1 : 1;
+      const mine = men.filter((s) => s.side === side);
+      const front = center.clone().addScaledVector(dir, sg * half), enemy = center.clone().addScaledVector(dir, -sg * half);
+      const face = Math.atan2(-sg * dir.x, -sg * dir.z);
+      const files = Math.ceil(mine.length / 2);
+      mine.forEach((s, k) => {
+        const rank = Math.floor(k / files), file = (k % files) - (files - 1) / 2 + rank * 0.5;
+        const slot = front.clone().addScaledVector(across, file * 3.0).addScaledVector(dir, sg * rank * 2.4);
+        slot.y = g.world.heightAt(slot.x, slot.z);
+        s.battle = { slot, face, phase: 'form', enemy, id: live.id };
+        s.marching = false; s.order = 'advance'; s.path = [slot.clone()]; s.sprint = true;
+        live.ids.add(s); live.start[side]++;
+      });
+      if (mine.length >= 8) { const c = mine.find((x) => !x.standard && !x.archer) ?? mine[0]; this.makeCommander(c); c.battle!.slot = front.clone().addScaledVector(dir, sg * 10); c.path = [c.battle!.slot.clone()]; }
+    }
+    live.t = 6;   // they're already in the field: a shorter form-up
+    f.live = live;
+    this.fields.push(f);
+    if (center.distanceTo(g.player.pos) < 1200) g.hud.toast(`The armies meet in the field near ${near?.site.name ?? 'here'} — they form their lines for battle!`);
+    g.sound?.('horn', center, 1);
+    void war;
+  }
+
   /** A route from a to b that crosses the river by the front's bridge (never wading through the water). */
   route(f: Front, a: THREE.Vector3, b: THREE.Vector3, lateral = 0) {
     const g = this.game, br = f.bridge;
@@ -318,10 +477,10 @@ export class Fronts {
     pts.push(b.clone());
     return pts;
   }
-  private nearestFoe(s: Soldier, L: Live, footOnly = false) { let d = 1e9; for (const o of L.ids) if (o.alive && o.side !== s.side && !(footOnly && o.horse)) d = Math.min(d, o.st.pos.distanceTo(s.st.pos)); return d; }
+  private nearestFoe(s: Soldier, L: Live, footOnly = false) { let d = 1e9; for (const o of L.ids) if (o.alive && !o.surrendered && o.side !== s.side && !(footOnly && o.horse)) d = Math.min(d, o.st.pos.distanceTo(s.st.pos)); return d; }
   /** the enemy a soldier in a live battle should engage (nearest, preferring the man opposite him) */
   foeFor(s: Soldier, range: number) {
-    const f = this.fronts.find((x) => x.live && x.live.ids.has(s));
+    const f = this.fronts.find((x) => x.live && x.live.ids.has(s)) ?? this.fields.find((x) => x.live && x.live.ids.has(s));
     if (!f || !s.battle) return null;
     const L = f.live!, across = new THREE.Vector3(-L.dir.z, 0, L.dir.x);
     const lateral = s.battle.slot.clone().sub(L.center).dot(across);
@@ -332,7 +491,7 @@ export class Fronts {
   private nearestFoeS(s: Soldier, L: Live, lateral = 0) {
     const across = new THREE.Vector3(-L.dir.z, 0, L.dir.x);
     let d = 1e9, best: Soldier | null = null;
-    for (const o of L.ids) if (o.alive && o.side !== s.side) {
+    for (const o of L.ids) if (o.alive && !o.surrendered && o.side !== s.side) {
       const lat = o.st.pos.clone().sub(L.center).dot(across);
       const dd = o.st.pos.distanceTo(s.st.pos) + Math.abs(lat - lateral) * 0.8;
       if (dd < d) { d = dd; best = o; }

@@ -45,7 +45,7 @@ export class Naval {
   private t = 0;
   constructor(public game: Game) {}
 
-  hpMax(s: Ship) { return s.cls === 'manowar' ? 160 : s.cls === 'frigate' ? 80 : 32; }
+  hpMax(s: Ship) { return s.cls === 'leviathan' ? 900 : s.cls === 'manowar' ? 160 : s.cls === 'frigate' ? 80 : 32; }
 
   /** Deck height in ship space at (x, z): the weather decks, and the companion stairs between them. */
   deckH(s: Ship, x: number, z: number) {
@@ -141,9 +141,9 @@ export class Naval {
     const side: Side = s.side ?? this.game.war.enlisted ?? 'vanguardia';
     let list = this.roster.get(s);
     if (!list) {
-      const nSail = s.cls === 'manowar' ? 10 : s.cls === 'frigate' ? 7 : 4;
-      const nGun = s.cls === 'manowar' ? 8 : s.cls === 'frigate' ? 6 : 4;
-      const nSold = s.cls === 'manowar' ? 10 : s.cls === 'frigate' ? 6 : 3;
+      const nSail = s.cls === 'leviathan' ? 16 : s.cls === 'manowar' ? 10 : s.cls === 'frigate' ? 7 : 4;
+      const nGun = s.cls === 'leviathan' ? 14 : s.cls === 'manowar' ? 8 : s.cls === 'frigate' ? 6 : 4;
+      const nSold = s.cls === 'leviathan' ? 18 : s.cls === 'manowar' ? 10 : s.cls === 'frigate' ? 6 : 3;
       list = [];
       for (let i = 0; i < nSail; i++) list.push({ side, role: 'sailor', pc, prisoner: false });
       for (let i = 0; i < nGun; i++) list.push({ side, role: 'gunner', pc, prisoner: false });
@@ -172,7 +172,7 @@ export class Naval {
     if (hs) return hs.filter((h) => h.alive && !h.prisoner && !h.jump && (!side || h.side === side)).length;
     const r = this.roster.get(s);
     if (r) return r.filter((m) => !m.prisoner && (!side || m.side === side)).length;
-    return s.cls === 'manowar' ? 28 : s.cls === 'frigate' ? 19 : 11;
+    return s.cls === 'leviathan' ? 48 : s.cls === 'manowar' ? 28 : s.cls === 'frigate' ? 19 : 11;
   }
   /** world position of a hand */
   world(h: Hand, out = new THREE.Vector3()) { return h.ship.model.localToWorld(out.copy(h.st.pos)); }
@@ -360,11 +360,18 @@ export class Naval {
     s.rudder = THREE.MathUtils.clamp(err * 2.2, -1, 1);
     // trim the yards to the wind
     s.trim = THREE.MathUtils.clamp(Math.atan2(fwd.x * wdir.z - fwd.z * wdir.x, fwd.dot(wdir)) * 0.4, -0.7, 0.7);
-    // fire when the enemy is abeam on one side and within range
-    if (dist < 420) {
-      const right = new THREE.Vector3(0, 0, 1).applyQuaternion(s.quat).setY(0).normalize();
-      const side = right.dot(to) > 0 ? 1 : -1;
-      if (Math.abs(right.dot(to)) > 0.82 && s.reload[side] <= 0) s.broadside(side as 1 | -1);
+    // each battery fires on any enemy in its arc: the closer to abeam (and the longer the ship, the wider the
+    // arc her guns can cover), the better
+    const right = new THREE.Vector3(0, 0, 1).applyQuaternion(s.quat).setY(0).normalize();
+    const arc = s.length > 80 ? 0.5 : s.length > 40 ? 0.72 : 0.82;
+    for (const side of [1, -1] as const) {
+      if (s.reload[side] > 0) continue;
+      for (const o of g.ships) {
+        if (o === s || !o.plan || !o.side || o.side === s.side || o.hp <= 0) continue;
+        const v = o.pos.clone().sub(s.pos).setY(0), d = v.length();
+        if (d > 450) continue;
+        if (right.dot(v) * side / d > arc) { s.broadside(side); break; }
+      }
     }
     void dt;
   }

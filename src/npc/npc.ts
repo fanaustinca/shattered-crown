@@ -131,7 +131,10 @@ export class NPC {
     this.bleeding += dmg > 15 ? dmg * 0.02 : 0;
     this.anim.limp = Math.max(0, 1 - Math.min(this.health.lleg, this.health.rleg) / 100);
     this.game.sound?.('hit:flesh', this.st.pos, 0.8);
-    if (this.health.head <= 0 || this.health.torso <= 0) { this.die(); return; }
+    const killed = this.health.head <= 0 || this.health.torso <= 0;
+    if (attacker === 'player' && (this as unknown as { side?: string }).side) this.game.war.playerStruck(this as never, killed);
+    if (killed) { this.die(attacker); return; }
+    if (attacker === 'player' && (this as unknown as { side?: string }).side) return;   // soldiers: the war decides who's angry
     if (attacker === 'player') {
       this.alertness = 1;
       if (this.person.role === 'guard' || this.person.temperament > 0.6) this.hostile = true;
@@ -139,10 +142,20 @@ export class NPC {
       this.game.law.crime('assault', this.st.pos, this.person.home, 0.6, true);
     }
   }
-  die() {
+  die(by?: 'player' | NPC) {
     this.activity = 'dead'; this.st.action = 'dead'; this.st.speed = 0;
     this.collider.setEnabled(false);
-    this.game.law.crime('murder', this.st.pos, this.person.home, 1, true);
+    // go limp: thrown away from whoever struck the blow
+    {
+      const from = by === 'player' ? this.game.player.pos : by ? by.st.pos : this.st.pos.clone().add(new THREE.Vector3(Math.random() - 0.5, 0, Math.random() - 0.5));
+      const push = this.st.pos.clone().sub(from).setY(0);
+      if (push.lengthSq() < 1e-4) push.set(Math.random() - 0.5, 0, Math.random() - 0.5);
+      push.normalize().multiplyScalar(1.6 + Math.random() * 1.6);
+      if (this.rig.root.visible !== false && this.st.pos.distanceTo(this.game.camera.position) < 120) this.game.ragdolls.spawn(this.rig, push);
+    }
+    // killing a soldier in war is not murder in the eyes of the law (the armies settle that score themselves)
+    if (!(this as unknown as { side?: string }).side && by === 'player') this.game.law.crime('murder', this.st.pos, this.person.home, 1, true);
+    else if (!(this as unknown as { side?: string }).side && by === undefined) this.game.law.crime('murder', this.st.pos, this.person.home, 1, true);
     this.game.residents.onDeath(this);
   }
 
@@ -300,6 +313,7 @@ export class NPC {
   }
   animate(dt: number) {
     this.st.speed = Math.min(this.st.speed, this.st.vel.length() + 0.2);
+    if (!this.alive && this.game.ragdolls.owns(this.rig)) return;     // physics has the body now
     this.anim.update(dt, this.st);
     if (this.sleepPose) { this.rig.root.position.copy(this.sleepPose.pos); this.rig.root.rotation.set(-Math.PI / 2, this.sleepPose.yaw, 0, 'YXZ'); this.rig.root.updateMatrixWorld(true); }
   }

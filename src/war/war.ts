@@ -35,6 +35,15 @@ export class Soldier extends NPC {
   horse: Animal | null = null;
   /** an archer: holds back behind the line and looses volleys */
   archer = false;
+  /** marching to the front with a battalion (it joins the front's strength when it arrives) */
+  battalion = false;
+  /** leads the army in a pitched battle: while he lives, a beaten side surrenders rather than routs */
+  commander = false;
+  /** has thrown down his arms: kneels, and is not to be attacked */
+  surrendered = false;
+  /** seconds left during which he remembers seeing the player */
+  alertT = 0;
+  lookT = Math.random() * 0.5;
   /** a musketeer (an archer's place in the line, with a matchlock) */
   musket = false;
   volleyT = 0;
@@ -135,12 +144,17 @@ export class War {
     return s;
   }
   /** A column of soldiers marching down a road to the war, in ranks behind a standard-bearer. */
-  spawnColumn(side?: Side, n = 16, near = this.game.player.pos) {
+  spawnColumn(side?: Side, n = 16, near = this.game.player.pos, from?: THREE.Vector3) {
     const g = this.game;
     if (!this.routes.length) this.buildRoutes();
-    // a road of that side passing 150-500 m from `near`, joined at that point
+    // a road of that side passing 150-500 m from `near`, joined at that point (or, marching out of a
+    // barracks, the road to the front nearest its door)
     const cands: { r: { side: Side; pts: THREE.Vector3[] }; i: number }[] = [];
-    for (const r of this.routes) {
+    if (from) {
+      let best: { r: { side: Side; pts: THREE.Vector3[] }; i: number } | null = null, bd = 1e9;
+      for (const r of this.routes) { if (side && r.side !== side) continue; for (let i = 0; i < r.pts.length - 8; i += 2) { const d = r.pts[i].distanceTo(from); if (d < bd) { bd = d; best = { r, i }; } } }
+      if (best && bd < 700) cands.push(best);
+    } else for (const r of this.routes) {
       if (side && r.side !== side) continue;
       for (let i = 0; i < r.pts.length - 8; i += 4) { const d = r.pts[i].distanceTo(near); if (d > 150 && d < 520) cands.push({ r, i }); }
     }
@@ -163,11 +177,18 @@ export class War {
         path.push(q);
       }
       const d0 = route[1].clone().sub(route[0]).setY(0).normalize();
-      const start = path[0].clone().addScaledVector(d0, -rank * 1.9 - (ranks - rank) * 0);
+      let start = path[0].clone().addScaledVector(d0, -rank * 1.9 - (ranks - rank) * 0);
+      if (from) {
+        // form up in front of the barracks, then march out onto the road
+        const dOut = path[0].clone().sub(from).setY(0).normalize(), sd = new THREE.Vector3(-dOut.z, 0, dOut.x);
+        start = from.clone().addScaledVector(dOut, -rank * 1.9).addScaledVector(sd, file * 1.3);
+        path.unshift(from.clone().addScaledVector(sd, file * 1.3));
+      }
       start.y = g.world.heightAt(start.x, start.z);
       const s = new Soldier(g, r.side, start);
       g.physics.owners.set(s.collider.handle, { kind: 'soldier', soldier: s, npc: s });
-      s.path = path.slice(1);
+      s.battalion = true;
+      s.path = from ? path : path.slice(1);
       s.st.yaw = Math.atan2(d0.x, d0.z);
       s.marching = true;
       if (k === 1) { s.standard = true; this.carryStandard(s); }
@@ -360,10 +381,31 @@ export class War {
       }
     }
     // columns marching to the front along the roads, whichever kingdom you're in
+    // grudges and favours fade
+    for (const k of Object.keys(this.betrayT) as Side[]) this.betrayT[k] = Math.max(0, (this.betrayT[k] ?? 0) - dt);
+    for (const k of Object.keys(this.favourT) as Side[]) this.favourT[k] = Math.max(0, (this.favourT[k] ?? 0) - dt);
+    // the barracks train battalions without end and march them to the front; you meet them on the roads
     this.columnT -= dt;
     if (this.columnT <= 0) {
-      this.columnT = 110 + Math.random() * 120;
-      if (this.soldiers.filter((x) => x.alive).length < 60) this.spawnColumn(undefined, 12 + Math.floor(Math.random() * 4) * 3);
+      this.columnT = 70 + Math.random() * 70;
+      if (this.soldiers.filter((x) => x.alive).length < 150) {
+        const bk = g.towns.plans.flatMap((pl) => pl.buildings.filter((b) => b.spec.type === 'barracks' && (pl.site.kingdom === 'vanguardia' || pl.site.kingdom === 'ironreach')).map((b) => ({ b, pl })))
+          .filter(({ b }) => Math.hypot(b.x - p.x, b.z - p.z) < 1400).sort(() => Math.random() - 0.5)[0];
+        const n = 18 + Math.floor(Math.random() * 5) * 3;
+        if (bk) {
+          const door = new THREE.Vector3(bk.b.x + Math.sin(bk.b.yaw) * (bk.b.spec.d / 2 + 6), 0, bk.b.z + Math.cos(bk.b.yaw) * (bk.b.spec.d / 2 + 6));
+          const made = this.spawnColumn(bk.pl.site.kingdom as Side, n, p, door);
+          if (made && door.distanceTo(p) < 700) { g.hud.toast(`Drums: a fresh battalion of ${made} marches out of the ${bk.pl.site.name} barracks for the front.`); g.sound?.('drums', door, 1); }
+        } else this.spawnColumn(undefined, n);
+      }
+    }
+    // battalions that reach the front join it (and leave the road) once you're not watching
+    for (const s of this.soldiers) {
+      if (!s.alive || !s.battalion || s.marching || s.battle || s.path.length || s.fightTarget) continue;
+      if (s.st.pos.distanceTo(p) < 220) continue;
+      const f = [...this.fronts.fronts].sort((a, b) => this.fronts.posAt(a, a.line).p.distanceTo(s.st.pos) - this.fronts.posAt(b, b.line).p.distanceTo(s.st.pos))[0];
+      if (f) f.str[s.side] += 8;
+      s.battalion = false; (s as Soldier & { joined?: boolean }).joined = true;
     }
     // skirmish waves near the player
     const nearCamp = this.camps.filter((c) => c.pos.distanceTo(p) < 700);
@@ -389,7 +431,8 @@ export class War {
     // soldier AI: pick the nearest enemy, else advance to the bridge or follow orders
     for (const s of this.soldiers) {
       if (!s.alive) continue;
-      const enemies = this.soldiers.filter((o) => o.alive && o.side !== s.side);
+      if (s.surrendered) { s.fightTarget = null; s.hostile = false; continue; }
+      const enemies = this.soldiers.filter((o) => o.alive && o.side !== s.side && !o.surrendered);
       let best: Soldier | null = null, bd = s.squad && s.order === 'follow' ? 18 : 60;
       for (const e of enemies) { const d = e.st.pos.distanceTo(s.st.pos); if (d < bd) { bd = d; best = e; } }
       if (s.order === 'hold' && best && bd > 8) best = null;
@@ -400,8 +443,13 @@ export class War {
       if (best && bd > 6 && Math.sign(best.st.pos.x - riverX(best.st.pos.z)) !== Math.sign(s.st.pos.x - riverX(s.st.pos.z)) && !g.world.bridges.some((b) => Math.hypot(s.st.pos.x - b.x, s.st.pos.z - b.z) < b.len / 2 + 4)) best = null;
       if (s.marching) { if (best && bd < 25) s.marching = false; else best = null; if (s.marching && !s.path.length) s.marching = false; }
       s.fightTarget = best;
-      // enemies of the player's side fight the player too
-      s.hostile = !!this.enlisted && this.enlisted !== s.side && s.st.pos.distanceTo(p) < 25;
+      // the player as an enemy: only once he has actually been seen (eyes with a field of view, range that falls
+      // at night, walls and hills in the way), or heard right behind; remembered for a while after
+      const dP = s.st.pos.distanceTo(p);
+      const enemyOfPlayer = (!!this.enlisted && this.enlisted !== s.side && (this.favourT[s.side] ?? 0) <= 0) || (this.betrayT[s.side] ?? 0) > 0;
+      s.lookT -= dt; s.alertT = Math.max(0, s.alertT - dt);
+      if (enemyOfPlayer && dP < 75 && s.lookT <= 0) { s.lookT = 0.4 + Math.random() * 0.3; if (this.seesPlayer(s, dP)) s.alertT = 20; }
+      s.hostile = enemyOfPlayer && s.alertT > 0 && dP < 45;
       if (!best && !s.hostile && !s.marching && !s.battle) {
         if (s.squad && (s.order === 'follow' || s.order === 'line')) {
           const idx = this.soldiers.filter((x) => x.squad).indexOf(s);
@@ -420,9 +468,44 @@ export class War {
       const s = this.soldiers[i];
       const drop = () => { if (s.horse) { const h = s.horse; s.horse = null; const k = g.fauna.extra.indexOf(h); if (k >= 0) g.fauna.extra.splice(k, 1); h.dispose(); } s.dispose(); this.soldiers.splice(i, 1); };
       if (!s.alive) { (s as Soldier & { deadT?: number }).deadT = ((s as Soldier & { deadT?: number }).deadT ?? 0) + dt; if ((s as Soldier & { deadT?: number }).deadT! > 120) drop(); }
-      else if (s.st.pos.distanceTo(p) > 1000 && !this.fronts.fronts.some((f) => f.live?.ids.has(s))) drop();
+      else if ((s.st.pos.distanceTo(p) > 1000 || (s as Soldier & { joined?: boolean }).joined) && !this.fronts.fronts.some((f) => f.live?.ids.has(s)) && !this.fronts.fields.some((f) => f.live?.ids.has(s))) drop();
     }
 
+  }
+  /** grudges and favours toward the player, per side (seconds left) */
+  betrayT: Partial<Record<Side, number>> = {};
+  favourT: Partial<Record<Side, number>> = {};
+  /** Can this soldier see the player? A ~150° field of view, 70 m by day (less at night, more if you're
+   *  sprinting), and a clear line of sight. */
+  seesPlayer(s: Soldier, d: number) {
+    const g = this.game, P = g.player;
+    if (d < 3.5) return true;
+    const night = 1 - g.lighting.dayFactor;
+    const range = 70 * (1 - night * 0.6) * (P.crouch ? 0.6 : 1) + (P.noise ?? 0) * 20;
+    if (d > range) return false;
+    const eye = s.st.pos.clone().add(new THREE.Vector3(0, 1.62, 0)), to = P.eyePos().sub(eye);
+    const fwd = new THREE.Vector3(Math.sin(s.st.yaw), 0, Math.cos(s.st.yaw));
+    if (fwd.dot(to.clone().setY(0).normalize()) < -0.26) return false;
+    const hit = g.physics.ray(eye, to.clone().normalize(), Math.max(0.1, to.length() - 0.6), groups(ALL, G_STATIC), s.collider);
+    return !hit;
+  }
+  /** The player struck (or killed) a soldier. Strike your own side and they turn on you — and the enemy,
+   *  seeing it, cheers you on and holds its fire for a while. Strike a side you don't serve and that side
+   *  hunts you. */
+  playerStruck(s: Soldier, killed: boolean) {
+    const g = this.game;
+    const other: Side = s.side === 'vanguardia' ? 'ironreach' : 'vanguardia';
+    this.betrayT[s.side] = Math.max(this.betrayT[s.side] ?? 0, this.enlisted === s.side ? 240 : 150);
+    for (const o of this.soldiers) if (o.alive && o.side === s.side && o.st.pos.distanceTo(s.st.pos) < 60) o.alertT = 25;
+    if (this.enlisted === s.side) {
+      g.hud.toast(killed ? `You cut down one of your own! The ${s.side === 'vanguardia' ? 'Vanguardian' : 'Ironreach'} ranks turn on you, traitor.` : 'You struck one of your own men!');
+      if (killed) {
+        this.favourT[other] = 150;
+        const cheer = ['Ha! Look — he\'s killing his own!', 'Well struck, turncoat! Keep at it!', 'Their own man did it for us!', 'Hah! One less for us to kill!'];
+        let n = 0;
+        for (const o of this.soldiers) if (o.alive && o.side === other && o.st.pos.distanceTo(g.player.pos) < 90 && n < 4) { o.say(cheer[n % cheer.length], true); o.fightTarget = null; o.hostile = false; n++; }
+      }
+    }
   }
   /** One shot from an archer or musketeer at a point: a lobbed arrow, or a flat musket ball with smoke. */
   volley(s: Soldier, target: THREE.Vector3) {

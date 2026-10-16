@@ -302,7 +302,7 @@ export class Ship implements Interactable {
       this.game.war.fireBall(muzzle, dir, 120, this.side ?? 'vanguardia', byPlayer, this);
       // recoil: the hull heels away from the broadside
       this.body.applyImpulseAtPoint(dir.clone().multiplyScalar(-this.mass * 0.0015), muzzle, true);
-    }, i * 90 + Math.random() * 60));
+    }, i * (guns.length > 60 ? 45 : 90) + Math.random() * 60));
     void q; void p;
   }
   lanternLight: THREE.Object3D | null = null;

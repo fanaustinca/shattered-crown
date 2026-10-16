@@ -42,6 +42,7 @@ import { Talk } from './npc/talk';
 import { Naval } from './war/naval';
 import { TravelPosts } from './world/posts';
 import { Gates } from './war/gates';
+import { Ragdolls } from './creature/ragdoll';
 import { Destruction } from './war/destruct';
 import { ClothSystem } from './render/cloth';
 
@@ -146,6 +147,7 @@ export class Game {
   naval = new Naval(this);
   posts = new TravelPosts(this);
   gates = new Gates(this);
+  ragdolls = new Ragdolls(this);
   destruct = new Destruction(this);
   private clothDt = 0;
   cloth!: ClothSystem;
@@ -470,6 +472,7 @@ export class Game {
     this.talk.update(aiDt);
     this.naval.update(aiDt);
     this.gates.update(aiDt);
+    this.ragdolls.update(aiDt);
     this.destruct.update(aiDt);
     this.war.step(aiDt);
     this.mark('ai');

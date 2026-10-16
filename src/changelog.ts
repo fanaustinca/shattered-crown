@@ -1,5 +1,19 @@
 // What's new, newest first (shown in Help → What's new).
 export const CHANGELOG: { v: string; date: string; items: string[] }[] = [
+  { v: '0.6.0', date: '2026-10-15', items: [
+    'The war never stops: every front is fought out of sight around the clock — each side loses men in proportion to the other\'s numbers, the barracks feed in fresh troops, and the line drifts toward the weaker side (the journal shows the numbers and who is gaining).',
+    'Barracks train battalions without end: twenty to thirty men form up outside, drums beating, and march down the roads to the front — you\'ll meet them as you travel.',
+    'Bigger battles (up to seventy a side) with commanders: a plumed captain or warlord stands behind each line. A side that is losing badly surrenders while its commander lives (the men kneel and throw down their arms) and breaks and runs once he has fallen.',
+    'Armies that meet in the open — columns on the road, or troops you spawn — form proper lines and fight a battle instead of brawling in a knot.',
+    'Ragdolls: the dead fall limp, thrown by the blow that killed them, and come to rest sprawled over the ground.',
+    'Soldiers have eyes: they must actually see you (a field of view, a range that shrinks at night and when you crouch, and a clear line of sight) before they attack, and they remember you for a while.',
+    'Kill your own side\'s men and they turn on you as a traitor — while the enemy cheers you on and holds its fire for a time.',
+    'Buildings: L-shaped houses with a rear wing, flags on grander houses, churches with a stone bell tower and spire, shop fronts with a fold-down counter of goods, and lean-to booths beside some shops.',
+    'Leaded windows: diamond-paned glass in twin casements with a transom, stone sills and lintels.',
+    'God mode (god() in the console): right-click anywhere on the map to teleport there.',
+    'Debug only: spawn.leviathan() — a 112 m four-decker with 266 guns and a crew that hunts enemy ships.',
+    'Performance: furniture inside houses is only drawn when you are inside or close enough to see in.',
+  ] },
   { v: '0.5.0', date: '2026-10-14', items: [
     'Conversations that actually go somewhere: every answer opens follow-up questions about what was just said (grief, the town\'s defences, their dreams, a drink, a joke), and the choices change as the talk drifts. Insults branch: apologise, laugh it off, buy them a drink — or make it worse and see what happens.',
     'People notice you: a drawn blade, blood on you, their own things in your hands, the weather.',
