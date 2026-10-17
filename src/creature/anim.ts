@@ -314,6 +314,8 @@ export class BipedAnimator {
   }
 
   attack(dir: BipedAnimator['swingDir']) { this.swingT = 0; this.swingDir = dir; }
+  /** Standing on something that moves (a deck, a cart): planted feet ride along with it. */
+  carryFeet(d: THREE.Vector3) { for (const v of [...this.planted, ...this.from, ...this.to]) v.add(d); }
 
   update(dt: number, st: MoveState & { carry?: boolean; eating?: boolean; sitting?: boolean; riding?: boolean; blocking?: boolean; armed?: boolean; swimming?: boolean }) {
     const rig = this.rig, root = rig.root, B = rig.byName;

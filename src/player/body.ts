@@ -44,6 +44,7 @@ export class PlayerBody {
     const look = mount?.st ? p.pos.clone().add(new THREE.Vector3(-Math.sin(p.yaw) * Math.cos(p.pitch) * 10, 1.6 + Math.sin(p.pitch) * 10, -Math.cos(p.yaw) * Math.cos(p.pitch) * 10)) : null;
     const planar = Math.hypot(p.vel.x, p.vel.z);
     this.anim.limp = p.limp;
+    if (p.platform) this.anim.carryFeet(p.platformVel.clone().multiplyScalar(dt));
     this.anim.update(dt, {
       pos, yaw: bodyYaw, speed: p.mode === 'seat' ? 0 : planar, swimming: p.mode === 'swim', turn: 0, vel: p.vel,
       action: p.mode === 'dead' ? 'dead' : this.pose === 'sleep' ? 'sleep' : 'idle',

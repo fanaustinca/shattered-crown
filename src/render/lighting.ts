@@ -57,8 +57,9 @@ export class Lighting {
     m.onBeforeCompile = function (sh, r) { orig.call(m, sh, r); csmHook.call(m, sh, r); };
     m.needsUpdate = true;
   }
-  prepObject(o: THREE.Object3D) {
-    o.traverse((c) => {
+  prepObject(o: THREE.Object3D | THREE.Material) {
+    if (!(o as THREE.Object3D).traverse) { this.prep(o as THREE.Material); return; }
+    (o as THREE.Object3D).traverse((c) => {
       const mm = (c as THREE.Mesh).material;
       if (!mm) return;
       if (Array.isArray(mm)) mm.forEach((x) => this.prep(x)); else this.prep(mm);

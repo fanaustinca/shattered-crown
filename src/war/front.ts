@@ -189,20 +189,22 @@ export class Fronts {
       const face = Math.atan2(-sg * dir.x, -sg * dir.z);
       const enemy = p.clone().addScaledVector(dir, -sg * gap);
       const nCav = Math.max(2, Math.round(per * 0.12)), nArch = Math.max(2, Math.round(per * 0.25)), nInf = per - nCav - nArch;
-      const files = Math.ceil(nInf / 2), aFiles = nArch;
+      // the line's frontage grows with the square root of its numbers (deeper ranks for a bigger army), at a
+      // shoulder-to-shoulder interval: ~16 files for fifty men, ~30 for two hundred
+      const ranks = Math.max(2, Math.round(Math.sqrt(nInf / 5))), files = Math.ceil(nInf / ranks), aFiles = nArch;
       for (let k = 0; k < per; k++) {
         const cav = k >= nInf + nArch, arch = !cav && k >= nInf;
         let slot: THREE.Vector3;
         if (!cav && !arch) {
           // two ranks, a pace and a half between files, the rear rank covering the gaps
-          const rank = Math.floor(k / files), file = (k % files) - (files - 1) / 2 + rank * 0.5;
-          slot = front.clone().addScaledVector(across, file * 3.0).addScaledVector(dir, sg * rank * 2.4);
+          const rank = Math.floor(k / files), file = (k % files) - (files - 1) / 2 + (rank % 2) * 0.5;
+          slot = front.clone().addScaledVector(across, file * 1.9).addScaledVector(dir, sg * rank * 2.0);
         } else if (arch) {
           const a = k - nInf, file = a - (aFiles - 1) / 2;
-          slot = front.clone().addScaledVector(across, file * 4.0).addScaledVector(dir, sg * 12);
+          slot = front.clone().addScaledVector(across, file * Math.min(4, (files * 1.9) / Math.max(1, aFiles))).addScaledVector(dir, sg * (ranks * 2 + 8));
         } else {
           const c = k - nInf - nArch, wing = c % 2 ? 1 : -1;
-          slot = front.clone().addScaledVector(across, wing * (files * 1.5 + 12 + (c >> 1) * 3.5)).addScaledVector(dir, sg * 8);
+          slot = front.clone().addScaledVector(across, wing * (files * 0.95 + 10 + (c >> 1) * 3.5)).addScaledVector(dir, sg * 6);
         }
         slot.x += (Math.random() - 0.5) * 0.5; slot.z += (Math.random() - 0.5) * 0.5;
         slot.y = g.world.heightAt(slot.x, slot.z);
@@ -229,7 +231,7 @@ export class Fronts {
       live.ids.add(cmd); live.start[side]++;
       // a battery of field guns behind the archers, laid on the enemy line
       for (const e of [-1, 1]) {
-        const gp = front.clone().addScaledVector(across, e * Math.min(18, files * 0.6)).addScaledVector(dir, sg * 22);
+        const gp = front.clone().addScaledVector(across, e * Math.min(18, files * 0.5)).addScaledVector(dir, sg * (ranks * 2 + 16));
         if (bank(gp) !== bank(front)) continue;
         gp.y = g.world.heightAt(gp.x, gp.z);
         const c = war.addCannon(gp, face, side);
@@ -434,10 +436,10 @@ export class Fronts {
       const mine = men.filter((s) => s.side === side);
       const front = center.clone().addScaledVector(dir, sg * half), enemy = center.clone().addScaledVector(dir, -sg * half);
       const face = Math.atan2(-sg * dir.x, -sg * dir.z);
-      const files = Math.ceil(mine.length / 2);
+      const ranks = Math.max(2, Math.round(Math.sqrt(mine.length / 5))), files = Math.ceil(mine.length / ranks);
       mine.forEach((s, k) => {
-        const rank = Math.floor(k / files), file = (k % files) - (files - 1) / 2 + rank * 0.5;
-        const slot = front.clone().addScaledVector(across, file * 3.0).addScaledVector(dir, sg * rank * 2.4);
+        const rank = Math.floor(k / files), file = (k % files) - (files - 1) / 2 + (rank % 2) * 0.5;
+        const slot = front.clone().addScaledVector(across, file * 1.9).addScaledVector(dir, sg * rank * 2.0);
         slot.y = g.world.heightAt(slot.x, slot.z);
         s.battle = { slot, face, phase: 'form', enemy, id: live.id };
         s.marching = false; s.order = 'advance'; s.path = [slot.clone()]; s.sprint = true;

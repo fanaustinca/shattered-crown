@@ -652,9 +652,13 @@ export class Naval {
         // gunners and hands at work: hauling, ramming, sponging (busy hands); idle talk in peace
         h.anim.talking = !h.alive ? 0 : h.task === 'station' && !h.path.length ? (h.role === 'gunner' ? Math.max(0, Math.sin(this.t * 3 + h.st.pos.x)) : 0) : h.role === 'sailor' && !h.path.length && !foe ? 0.15 : 0;
         if (far && Math.random() < 0.5) continue;
-        // pose in deck space (the holder's world matrix is the ship's; the animator works locally)
-        h.holder.matrixWorld.identity();
+        // pose in deck space: lift the man off the ship for the moment of posing, so every world-space query the
+        // animator makes (bone world positions, parents' world rotations) is in deck coordinates, then put him back
+        const par = h.holder.parent;
+        if (par) par.remove(h.holder);
+        h.holder.updateMatrixWorld(true);
         h.anim.update(dt, h.st);
+        if (par) par.add(h.holder);
       }
     }
   }

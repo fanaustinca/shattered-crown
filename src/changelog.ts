@@ -1,5 +1,16 @@
 // What's new, newest first (shown in Help → What's new).
 export const CHANGELOG: { v: string; date: string; items: string[] }[] = [
+  { v: '0.7.1', date: '2026-10-16', items: [
+    'Waves fixed properly: a rough sea is now made of longer, faster waves rather than ever-steeper spikes, and every wave\'s motion is tracked in double precision, so the sea no longer turns jagged in a storm or judders after a long session.',
+    'Fixed the Rust "recursive use of an object" error: shattering a jug, plate or other breakable inside a physics callback threw an error that left the physics engine locked.',
+    'Inventory and containers show a picture of each item — its own 3D model, lit like a still life — instead of just its name.',
+    'Weapons you find are taken up ready to use (E on a sword, axe, bow or musket puts it in your hand, drawn), and "Hold in hand" from the pack works for every weapon.',
+    'Sound no longer drops out in big battles: the number of sounds playing at once is limited, the loudest win, and only the nearest get the expensive 3D treatment.',
+    'People on ships no longer have their legs flung about while the ship moves; your own feet ride the deck too.',
+    'Soldiers and townsfolk see fences: they walk round paddocks and garden fences instead of into them.',
+    'Battle lines scale with the size of the army: a deeper, narrower block for fifty men, a wider front for two hundred.',
+    'Removed the deprecated THREE.Clock (console warning).',
+  ] },
   { v: '0.7.0', date: '2026-10-16', items: [
     'Warships repainted and rebuilt outside: the hull planking was facing the wrong way, so from outside you were seeing the red-painted inside of the hull. Now they wear proper paint — black with ochre bands along the gun decks on the frigates and men-o\'-war, black and red on the Leviathan, every strake a slightly different tone — with copper sheathing below the waterline, a gilded lion figurehead and head rails, glazed quarter galleries at the stern and gilt mouldings.',
     'Below decks is lived in: cask tiers along both sides of the hold and orlop, crates, sacks, coils of cable and spare sails, a chain pump, shot garlands and racked rammers on the gun decks, mess tables slung between the guns with bowls and tankards, fire buckets and cartridge boxes, and lanterns along every deck.',

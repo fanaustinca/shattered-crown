@@ -6,12 +6,12 @@ import * as THREE from 'three';
 import type { Game } from '../game';
 import { RAPIER, groups, G_STATIC, ALL } from '../physics/physics';
 
-const CELL = 3;
+const CELL = 2.5;
 const _p = new THREE.Vector3();
 
 export class Nav {
   private _ball: RAPIER.Ball | null = null;
-  private get ball() { return this._ball ??= new RAPIER.Ball(1.1); }
+  private get ball() { return this._ball ??= new RAPIER.Ball(1.35); }
   private ident = { x: 0, y: 0, z: 0, w: 1 };
   /** cell blocked? cached per frame-ish (a battle asks about the same ground over and over) */
   private cache = new Map<string, boolean>();
@@ -40,8 +40,22 @@ export class Nav {
   }
   /** Is the straight walk from a to b clear (no walls, houses or water along it)? */
   clear(a: THREE.Vector3, b: THREE.Vector3) {
-    const d = Math.hypot(b.x - a.x, b.z - a.z), n = Math.max(1, Math.ceil(d / 2.5));
-    for (let i = 1; i < n; i++) { const t = i / n; if (this.blocked(a.x + (b.x - a.x) * t, a.z + (b.z - a.z) * t)) return false; }
+    const g = this.game;
+    const d = Math.hypot(b.x - a.x, b.z - a.z);
+    if (d < 0.5) return true;
+    // water along the way
+    const n = Math.max(1, Math.ceil(d / 2));
+    for (let i = 1; i < n; i++) { const t = i / n; if (this.wet(a.x + (b.x - a.x) * t, a.z + (b.z - a.z) * t)) return false; }
+    // anything solid across it — a fence rail, a wall, a house — at knee and chest height, down both
+    // shoulders (thin fences slip between sample points, a ray doesn't miss them)
+    const dir = new THREE.Vector3(b.x - a.x, 0, b.z - a.z).normalize(), side = new THREE.Vector3(-dir.z, 0, dir.x);
+    for (const off of [-0.35, 0.35]) for (const h of [0.55, 1.2]) {
+      const o = new THREE.Vector3(a.x + side.x * off, a.y + h, a.z + side.z * off);
+      const end = new THREE.Vector3(b.x + side.x * off, b.y + h, b.z + side.z * off);
+      const v = end.sub(o), len = v.length();
+      const hit = g.physics.world.castRay(new RAPIER.Ray(o, v.normalize()), len, true, undefined, groups(ALL, G_STATIC), g.physics.terrainCollider, undefined, (c) => { const ow = g.physics.owners.get(c.handle); return !ow || (ow.kind !== 'door' && ow.kind !== 'gate'); });
+      if (hit) return false;
+    }
     return true;
   }
   /** Waypoints from a to b around obstacles (null: no way found nearby — walk straight and hope). */

@@ -75,6 +75,15 @@ export class Combat {
     }
   }
 
+  /** Draw a particular weapon from the pack. */
+  equip(it: import('../player/inventory').InvItem) {
+    const g = this.game, ia = g.interaction, d = ITEMS[it.id];
+    if (!d?.weapon) return;
+    ia.hands = it; this.drawn = true;
+    g.playerBody?.setWeapon(d);
+    if (it.id === 'musket') { this.musketLoaded = false; this.musketReload = 0; }
+    g.hud.toast(`You take up the ${d.name.toLowerCase()}. ${d.id === 'bow' ? 'Right-click to draw, left-click to loose.' : d.id === 'musket' ? 'R to load, right-click to shoulder, left-click to fire.' : 'Left-click to strike, right-click to block. 1 to sheathe.'}`);
+  }
   toggleWeapon() {
     const g = this.game, ia = g.interaction;
     if (this.drawn) { this.drawn = false; ia.hands = null; g.playerBody?.setWeapon(null); return; }

@@ -7,7 +7,7 @@ import { Lighting } from './render/lighting';
 import { Terrain } from './render/terrain';
 import { Grass, sunDirRef } from './render/grass';
 import { Trees } from './render/trees';
-import { Water, setSeaFloor, seaHeight, riverChop, waterUniforms } from './render/water';
+import { Water, setSeaFloor, seaHeight, riverChop, waterUniforms , advanceWaves } from './render/water';
 import { QUALITY, settings, saveSettings, guessQuality, type Quality } from './core/settings';
 import { Physics, groups, G_STATIC, G_VEHICLE } from './physics/physics';
 import { Input } from './core/input';
@@ -104,7 +104,7 @@ export class Game {
   grass!: Grass;
   trees!: Trees;
   water!: Water;
-  clock = new THREE.Clock();
+  private lastFrameT = performance.now();
   time = 0;
   hours = 9.5;
   dayCount = 0;
@@ -427,7 +427,8 @@ export class Game {
     const loop = () => {
       requestAnimationFrame(loop);
       if (this.manual || !this.ready) return;
-      const dt = Math.min(0.1, this.clock.getDelta());
+      const nowT = performance.now(), dt = Math.min(0.1, (nowT - this.lastFrameT) / 1000);
+      this.lastFrameT = nowT;
       this.avgFrame += (dt * 1000 - this.avgFrame) * 0.05;
       this.step(dt);
       this.renderFrame();
@@ -463,6 +464,7 @@ export class Game {
       this.interaction.pack.age(dt * this.daySpeed);
     }
     this.time += simDt;
+    advanceWaves(simDt);
     if (!this.freeCam) this.player.look(dt);
     this.props.activators[0] = this.player.pos;
     this.props.updateActivity(dt);

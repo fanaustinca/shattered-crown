@@ -7,6 +7,7 @@ export class Audio {
   ctx: AudioContext | null = null;
   master!: GainNode;
   noise!: AudioBuffer;
+  private voices: number[] = [];
   amb: Record<string, { src: AudioBufferSourceNode; gain: GainNode; filter: BiquadFilterNode }> = {};
   listener = new THREE.Vector3();
   private last = new Map<string, number>();
@@ -60,9 +61,17 @@ export class Audio {
     if (pos) dist = pos.distanceTo(this.listener);
     g.gain.value = vol / (1 + dist * dist * 0.02);
     if (g.gain.value < 0.003) return null;
+    // voice budget: a battle can ask for hundreds of footsteps, clashes and shots a second, which overloads the
+    // audio thread and the whole mix drops out. Keep at most ~40 voices alive; once busy, only louder sounds
+    // get through, and only the loudest few get the expensive HRTF spatialiser
+    const now = c.currentTime;
+    this.voices = this.voices.filter((e) => e > now);
+    const busy = this.voices.length;
+    if (busy >= 40 || (busy >= 24 && g.gain.value < 0.12) || (busy >= 12 && g.gain.value < 0.03)) { g.disconnect(); return null; }
+    this.voices.push(now + (vol > 1.5 ? 2.5 : 0.6));
     if (pos) {
       const p = c.createPanner();
-      p.panningModel = 'HRTF'; p.distanceModel = 'inverse'; p.refDistance = 3; p.rolloffFactor = 0.6;
+      p.panningModel = busy < 8 && g.gain.value > 0.15 ? 'HRTF' : 'equalpower'; p.distanceModel = 'inverse'; p.refDistance = 3; p.rolloffFactor = 0.6;
       p.positionX.value = pos.x; p.positionY.value = pos.y; p.positionZ.value = pos.z;
       g.connect(p).connect(this.master);
     } else g.connect(this.master);

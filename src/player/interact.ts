@@ -82,7 +82,9 @@ export class Interaction {
           if (pr === this.held) break;
           this.targetName = this.propLabel(pr);
           if (!this.held) {
-            if (pr.def.mass <= 60) add({ key: 'E', label: pr.def.mass > 25 ? 'Drag' : 'Pick up', run: () => this.grab(pr) });
+            // a weapon is taken up ready to use (in your hand, drawn), not carried about like a log
+            if (pr.def.weapon && !pr.price) add({ key: 'E', label: `Take up the ${pr.def.name.toLowerCase()}`, run: () => this.takeWeapon(pr) });
+            else if (pr.def.mass <= 60) add({ key: 'E', label: pr.def.mass > 25 ? 'Drag' : 'Pick up', run: () => this.grab(pr) });
             if (pr.price && pr.owner && pr.owner !== 'player') add({ key: 'R', label: `Buy (${pr.price}d)`, run: () => this.buy(pr) });
             if (this.canStash(pr)) add({ key: 'F', label: pr.price && pr.owner !== 'player' ? 'Take (steal)' : 'Take', run: () => this.stash(pr) });
             if (pr.def.food) add({ key: 'Q', label: 'Eat', run: () => this.eatProp(pr) });
@@ -254,6 +256,14 @@ export class Interaction {
   }
 
   canStash(pr: Prop) { return pr.def.mass <= 40 && !!this.pack.fitsAny?.(pr.def.id); }
+  takeWeapon(pr: Prop) {
+    const g = this.game;
+    const n = this.pack.items.length;
+    this.stash(pr);
+    const it = this.pack.items.length > n ? this.pack.items[this.pack.items.length - 1] : this.pack.items.find((x) => x.id === pr.def.id);
+    if (!it) return;
+    g.combat.equip(it);
+  }
   stash(pr: Prop) {
     const g = this.game;
     if (pr.owner && pr.owner !== 'player') g.law.crime('theft', pr.obj.position, pr.owner, Math.min(1, pr.def.value / 40 + 0.1), true);

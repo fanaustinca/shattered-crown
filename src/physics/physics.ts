@@ -71,16 +71,21 @@ export class Physics {
 
   private tmpP = new THREE.Vector3();
   private drainEvents() {
-    this.events.drainContactForceEvents((ev) => {
-      const a = this.owners.get(ev.collider1()), b = this.owners.get(ev.collider2());
-      const f = ev.totalForceMagnitude();
-      const c1 = this.world.getCollider(ev.collider1());
-      const t = c1?.translation();
-      if (t) this.tmpP.set(t.x, t.y, t.z);
+    // collect first, act after: a handler may create or remove bodies (a keg going up, a wall falling), and
+    // touching the physics world from inside Rapier's own callback is the "recursive use of an object" error
+    const evs: [number, number, number][] = [];
+    this.events.drainContactForceEvents((ev) => { evs.push([ev.collider1(), ev.collider2(), ev.totalForceMagnitude()]); });
+    this.events.drainCollisionEvents(() => { /* sensors are polled */ });
+    for (const [h1, h2, f] of evs) {
+      const a = this.owners.get(h1), b = this.owners.get(h2);
+      if (!a?.onContact && !b?.onContact) continue;
+      const c1 = this.world.getCollider(h1);
+      if (!c1) continue;
+      const t = c1.translation();
+      this.tmpP.set(t.x, t.y, t.z);
       a?.onContact?.(b, f, this.tmpP);
       b?.onContact?.(a, f, this.tmpP);
-    });
-    this.events.drainCollisionEvents(() => { /* sensors are polled */ });
+    }
   }
 
   /** Ray cast; returns hit point, normal, collider, distance. */

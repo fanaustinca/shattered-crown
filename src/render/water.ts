@@ -26,6 +26,11 @@ export const waterUniforms = {
   uSwell: { value: 0.3 },        // swell height (wind strength and duration)
   uWaveAmp: { value: 0.7 },      // overall sea state (weather)
   uWaveRot: { value: 0 },        // the swell turns to run with the wind
+  /** wind waves grow LONGER (not steeper) as the sea gets up: wavelength scale = max(1, uWaveAmp) */
+  uWaveLen: { value: 1 },
+  /** each wave's phase (c·k·t), advanced on the CPU in double precision and wrapped, so the sea never
+   *  judders after hours of play (float32 time would) and a changing sea state never makes waves jump */
+  uPhase: { value: new Array(16).fill(0) as number[] },
   tWaterNormal: { value: null as THREE.Texture | null },
   uSSR: { value: 1 },
 };
@@ -35,21 +40,33 @@ let seaFloor: ((x: number, z: number) => number) | null = null;
 /** The game tells the sea how deep it is (waves shoal and die on the beach; swells need open water). */
 export function setSeaFloor(fn: (x: number, z: number) => number) { seaFloor = fn; }
 const ss = (a: number, b: number, x: number) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
-export function seaHeight(x: number, z: number, t: number, amp: number, rot = waterUniforms.uWaveRot.value): number {
+/** Advance every wave's phase by its own speed (call once per sim step). Storm waves are longer and so
+ *  run faster, as on a real sea. */
+const phase = new Float64Array(16);
+export function advanceWaves(dt: number) {
+  const S = Math.max(1, waterUniforms.uWaveAmp.value);
+  waterUniforms.uWaveLen.value = S;
+  WAVES.forEach(([, , , L], i) => { const k = (2 * Math.PI) / (L * S); phase[i] = (phase[i] + Math.sqrt(9.8 * k) * dt) % (Math.PI * 2); });
+  SWELLS.forEach(([, , , L], i) => { const k = (2 * Math.PI) / L; phase[WAVES.length + i] = (phase[WAVES.length + i] + Math.sqrt(9.8 * k) * dt) % (Math.PI * 2); });
+  for (let i = 0; i < 16; i++) waterUniforms.uPhase.value[i] = phase[i];
+}
+export function seaHeight(x: number, z: number, _t: number, amp: number, rot = waterUniforms.uWaveRot.value): number {
   // Gerstner: approximate height at (x,z) ignoring the small horizontal displacement
   let y = 0;
   const cr = Math.cos(rot), sr = Math.sin(rot);
   const depth = seaFloor ? Math.max(0, -seaFloor(x, z)) : 50;
-  const wind = amp * ss(0, 7, depth), swell = waterUniforms.uSwell.value * ss(6, 40, depth);
-  for (const [set, A] of [[WAVES, wind], [SWELLS, swell]] as const) {
-    if (A <= 0) continue;
-    for (const [dx0, dz0, st, L] of set) {
-      const dx = dx0 * cr - dz0 * sr, dz = dx0 * sr + dz0 * cr;
-      const l = Math.hypot(dx, dz), k = (2 * Math.PI) / L, c = Math.sqrt(9.8 / k);
-      const a = (st / k) * (set === WAVES && L < 12 ? Math.min(A, 1) : A);
-      y += a * Math.sin(k * ((dx / l) * x + (dz / l) * z) - c * k * t * 1.0);
-    }
-  }
+  const fade = ss(0, 7, depth), S = Math.max(1, amp), steep = Math.min(amp, 1) * fade;
+  WAVES.forEach(([dx0, dz0, st, L], i) => {
+    const dx = dx0 * cr - dz0 * sr, dz = dx0 * sr + dz0 * cr;
+    const l = Math.hypot(dx, dz), k = (2 * Math.PI) / (L * S);
+    y += (st * steep / k) * Math.sin(k * ((dx / l) * x + (dz / l) * z) - phase[i]);
+  });
+  const swell = waterUniforms.uSwell.value * ss(6, 40, depth);
+  if (swell > 0) SWELLS.forEach(([dx0, dz0, st, L], i) => {
+    const dx = dx0 * cr - dz0 * sr, dz = dx0 * sr + dz0 * cr;
+    const l = Math.hypot(dx, dz), k = (2 * Math.PI) / L;
+    y += (st * swell / k) * Math.sin(k * ((dx / l) * x + (dz / l) * z) - phase[WAVES.length + i]);
+  });
   return y;
 }
 /** Wind chop on the river (matches the shader). */
@@ -89,7 +106,8 @@ function makeNormalTexture(size = 256): THREE.DataTexture {
 }
 
 const VERT = /* glsl */ `
-uniform float uTime, uWaveAmp, uWaveRot, uSwell;
+uniform float uTime, uWaveAmp, uWaveRot, uSwell, uWaveLen;
+uniform float uPhase[16];
 uniform vec2 uWind;
 attribute float aKind;      // 0 sea, 1 river, 2 lake
 attribute vec2 aFlow;       // river flow direction * speed
@@ -113,32 +131,31 @@ void main() {
   if (aKind < 0.5) {
     float depth = max(0.0, p.y - terrainHeight(p.xz));
     float dist = distance(p.xz, cameraPosition.xz);
-    float amp = uWaveAmp * smoothstep(0.0, 7.0, depth) * (1.0 - smoothstep(1500.0, 5000.0, dist));
+    float fade = smoothstep(0.0, 7.0, depth) * (1.0 - smoothstep(1500.0, 5000.0, dist));
+    float steep = min(uWaveAmp, 1.0) * fade;
     vec3 disp = vec3(0.0); vec3 tx = vec3(1.0, 0.0, 0.0), tz = vec3(0.0, 0.0, 1.0);
-    // short chop saturates (it breaks into foam rather than growing), and the horizontal Gerstner pull is
-    // scaled so the summed steepness never folds a crest over itself (that read as glitchy, racing water)
-    float qsum = 0.0;
-    for (int i = 0; i < NW; i++) qsum += WV[i].z * (WV[i].w < 12.0 ? min(amp, 1.0) : amp);
-    float hs = min(0.8, 0.62 / max(qsum, 1e-3));
+    // a rougher sea is made of longer waves of the same steepness (not ever-steeper spikes); the horizontal
+    // Gerstner pull is kept below the folding limit
+    float hs = 0.75;
     for (int i = 0; i < NW; i++) {
       vec2 d = mat2(cos(uWaveRot), sin(uWaveRot), -sin(uWaveRot), cos(uWaveRot)) * normalize(WV[i].xy);
-      float k = 6.2831853 / WV[i].w, c = sqrt(9.8 / k);
-      float ai = WV[i].w < 12.0 ? min(amp, 1.0) * (1.0 - smoothstep(120.0, 400.0, dist)) : amp;
-      float a = WV[i].z / k * ai;
-      float f = k * (dot(d, p.xz) - c * uTime);
+      float k = 6.2831853 / (WV[i].w * uWaveLen);
+      float q = WV[i].z * steep * (WV[i].w < 12.0 ? 1.0 - smoothstep(120.0, 400.0, dist) : 1.0);
+      float a = q / k;
+      float f = k * dot(d, p.xz) - uPhase[i];
       float s = sin(f), co = cos(f);
       disp += vec3(d.x * a * co, a * s, d.y * a * co) * vec3(hs, 1.0, hs);
-      tx += vec3(-d.x * d.x * WV[i].z * ai * s * hs, d.x * WV[i].z * ai * co, -d.x * d.y * WV[i].z * ai * s * hs);
-      tz += vec3(-d.x * d.y * WV[i].z * ai * s * hs, d.y * WV[i].z * ai * co, -d.y * d.y * WV[i].z * ai * s * hs);
-      vCrest += max(0.0, s) * WV[i].z * ai;
+      tx += vec3(-d.x * d.x * q * s * hs, d.x * q * co, -d.x * d.y * q * s * hs);
+      tz += vec3(-d.x * d.y * q * s * hs, d.y * q * co, -d.y * d.y * q * s * hs);
+      vCrest += max(0.0, s) * q * uWaveLen;
     }
     // the long swell, building offshore
     float sa = uSwell * smoothstep(6.0, 40.0, depth) * (1.0 - smoothstep(3000.0, 9000.0, dist));
     if (sa > 0.001) for (int i = 0; i < NS; i++) {
       vec2 d = mat2(cos(uWaveRot), sin(uWaveRot), -sin(uWaveRot), cos(uWaveRot)) * normalize(SV[i].xy);
-      float k = 6.2831853 / SV[i].w, c = sqrt(9.8 / k);
+      float k = 6.2831853 / SV[i].w;
       float a = SV[i].z / k * sa;
-      float f = k * (dot(d, p.xz) - c * uTime);
+      float f = k * dot(d, p.xz) - uPhase[NW + i];
       float s = sin(f), co = cos(f);
       disp += vec3(d.x * a * co, a * s, d.y * a * co) * vec3(0.5, 1.0, 0.5);
       tx += vec3(-d.x * d.x * SV[i].z * sa * s * 0.8, d.x * SV[i].z * sa * co, -d.x * d.y * SV[i].z * sa * s * 0.8);

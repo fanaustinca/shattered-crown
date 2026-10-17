@@ -10,6 +10,7 @@ import { Grid, freshness, freshLabel, type InvItem } from '../player/inventory';
 import { LIMBS, type Limb } from '../player/player';
 import type { NPC } from '../npc/npc';
 import type { DNode } from '../npc/talk';
+import { itemIcon } from './icons';
 import { kingdomAt, nearestSite, HALF } from '../world/layout';
 import { DESIGN_COUNT, enumerateCatalog } from '../props/furniture';
 
@@ -290,7 +291,7 @@ export class UI {
           const d = ITEMS[it.id];
           const fr = d.food ? freshness(it) : 1;
           const e = $(`<div class="item ${d.kind} ${it.owner && it.owner !== 'player' ? 'stolen' : ''}" draggable="true" style="left:${it.x * CELL}px;top:${it.y * CELL}px;width:${w * CELL - 4}px;height:${h * CELL - 4}px">
-            <span>${d.name}${it.n > 1 ? ` ×${it.n}` : ''}</span>${d.food ? `<em style="background:hsl(${fr * 110},60%,40%)">${freshLabel(fr)}</em>` : ''}${it.contents?.items.length ? `<em>${it.contents.items.length} inside</em>` : ''}</div>`);
+            ${itemIcon(it.id) ? `<img class="ico" src="${itemIcon(it.id)}" alt="" draggable="false">` : ''}<span>${d.name}${it.n > 1 ? ` ×${it.n}` : ''}</span>${d.food ? `<em style="background:hsl(${fr * 110},60%,40%)">${freshLabel(fr)}</em>` : ''}${it.contents?.items.length ? `<em>${it.contents.items.length} inside</em>` : ''}</div>`);
           e.addEventListener('dragstart', (ev) => { (ev as DragEvent).dataTransfer!.setData('text', String(it.uid)); dragging = { it, from: grid }; });
           e.addEventListener('mouseenter', () => { tip.innerHTML = `<b>${d.name}</b><br>${d.desc}<br><span class="dim">${(d.mass * it.n).toFixed(1)} kg · worth ${d.value * it.n}d${d.food ? ` · ${freshLabel(fr)}` : ''}${it.owner && it.owner !== 'player' ? ' · <em>stolen</em>' : ''}</span>`; tip.style.display = 'block'; });
           e.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
@@ -340,7 +341,7 @@ export class UI {
       const opts: [string, () => void][] = [];
       if (d.food) opts.push(['Eat', () => { ia.consume(it.id, freshness(it)); grid.remove(it, 1); }]);
       if (d.food?.raw && it.id === 'meat' && ia.pack.count('salt')) opts.push(['Salt it (keeps for months)', () => { grid.remove(it, 1); ia.pack.add('salted_meat', 1, { age: 0 }); }]);
-      if (d.weapon) opts.push(['Hold in hand', () => { ia.hands = it; g.combat.drawn = true; g.playerBody.setWeapon(d); }]);
+      if (d.weapon) opts.push(['Hold in hand', () => g.combat.equip(it)]);
       if (d.kind === 'medical') opts.push(['Use', () => ia.useBandage()]);
       if (it.contents) opts.push(['Open', () => { ia.openContainer = { grid: it.contents!, title: d.name, owner: null }; }]);
       opts.push(['Drop', () => { ia.dropFromPack(it, grid); }]);

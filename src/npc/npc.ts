@@ -223,9 +223,9 @@ export class NPC {
       if (this.path.length) {
         // soldiers on the move: if a house, a wall or water lies across the way to the next waypoint, find a
         // way round it first (gates, bridges)
-        if ((this as unknown as { side?: string }).side && this.path[0] !== this.navChecked) {
+        if (this.path[0] !== this.navChecked && (st.pos.distanceToSquared(p.pos) < 160 * 160 || (this as unknown as { side?: string }).side)) {
           this.navChecked = this.path[0];
-          if (this.path[0].distanceTo(st.pos) > 9 && !g.nav.clear(st.pos, this.path[0])) {
+          if (this.path[0].distanceTo(st.pos) > 3 && !g.settlements.inside(st.pos) && !g.settlements.inside(this.path[0]) && !g.nav.clear(st.pos, this.path[0])) {
             const r = g.nav.route(st.pos, this.path[0]);
             if (r && r.length > 1) { this.path.splice(0, 1, ...r); this.navChecked = this.path[0]; }
           }
